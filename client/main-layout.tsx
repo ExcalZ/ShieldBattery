@@ -49,7 +49,7 @@ import {
 } from './policies/action-creators'
 import LoadingIndicator from './progress/dots'
 import { useAppDispatch, useAppSelector } from './redux-hooks'
-import { openSettingsDialog } from './settings/action-creators'
+import { openSettings } from './settings/action-creators'
 import { isShieldBatteryHealthy, isStarcraftHealthy } from './starcraft/is-starcraft-healthy'
 import { StarcraftStatus } from './starcraft/starcraft-reducer'
 import { colorTextSecondary } from './styles/colors'
@@ -415,7 +415,7 @@ export function MainLayout() {
               key='settings'
               ref={settingsButtonRef}
               icon={<FadedSettingsIcon />}
-              onClick={() => dispatch(openSettingsDialog())}
+              onClick={() => openSettings()}
             />
           </Tooltip>
           <FriendsListActivityButton />

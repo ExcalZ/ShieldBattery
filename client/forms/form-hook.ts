@@ -117,7 +117,12 @@ export type ValidatorMap<ModelType> = Partial<{
  *   render (similar semantics to `useState`).
  * @param validations A mapping of name -> a function to validate a value for that form input. Any
  *   missing names will be assumed to be valid at all times.
- * @param onSubmit A callback for when the form has been submitted and is free of validation errors
+ * @param callbacks A set of callbacks which will be called during various phases of the form.
+ * @param callbacks.onSubmit A callback for when the form has been submitted and is free of
+ *   validation errors.
+ * @param callbacks.onChange A callback for when the form's model value has changed.
+ * @param callbacks.onValidatedChange
+ * @param callbacks.onValidated
  */
 export function useForm<ModelType>(
   model: Readonly<ModelType>,
