@@ -113,9 +113,9 @@ export default function App() {
                   <MainContent />
                 </Route>
               </Switch>
+              <Settings />
               <ConnectedSnackbar />
               <ConnectedDialogOverlay />
-              <Settings />
             </React.Suspense>
           </RootErrorBoundary>
           <UpdateOverlay />
