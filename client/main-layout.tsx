@@ -415,7 +415,7 @@ export function MainLayout() {
               key='settings'
               ref={settingsButtonRef}
               icon={<FadedSettingsIcon />}
-              onClick={() => openSettings()}
+              onClick={() => dispatch(openSettings())}
             />
           </Tooltip>
           <FriendsListActivityButton />
