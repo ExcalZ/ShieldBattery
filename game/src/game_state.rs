@@ -21,7 +21,7 @@ use crate::app_messages::{
     GAME_STATUS_ERROR,
 };
 use crate::app_socket;
-use crate::bw::{self, get_bw, GameType, StormPlayerId, UserLatency};
+use crate::bw::{self, get_bw, Bw, GameType, StormPlayerId, UserLatency};
 use crate::cancel_token::{CancelToken, Canceler, SharedCanceler};
 use crate::forge;
 use crate::game_thread::{
@@ -1423,7 +1423,12 @@ async unsafe fn try_join_lobby_once(
     // network code actually do its job.
     let (send, recv) = oneshot::channel();
     let map_path = map_path.clone();
+    debug!("try_join_lobby_once");
     std::thread::spawn(move || {
+        debug!(
+            "try_join_lobby_once spawned: {:?}",
+            std::thread::current().id()
+        );
         let address = Ipv4Addr::new(10, 27, 27, 0);
         snp::spoof_game("shieldbattery", address);
         let bw = get_bw();

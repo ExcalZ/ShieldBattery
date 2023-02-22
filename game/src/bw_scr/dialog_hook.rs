@@ -1,6 +1,6 @@
 use bw_dat::dialog::{Dialog, EventHandler};
 
-use crate::bw::{self, get_bw};
+use crate::bw::{self, get_bw, Bw};
 
 static CHAT_BOX_EVENT_HANDLER: EventHandler = EventHandler::new();
 static MSG_FILTER_EVENT_HANDLER: EventHandler = EventHandler::new();
@@ -14,6 +14,13 @@ pub unsafe fn spawn_dialog_hook(
     let dialog = Dialog::new(raw);
     let ctrl = dialog.as_control();
     let name = ctrl.string();
+
+    debug!(
+        "spawn dialog on {:?}: {}",
+        std::thread::current().id(),
+        name
+    );
+
     let event_handler = if name == "TextBox" {
         let inited = CHAT_BOX_EVENT_HANDLER.init(chat_box_event_handler);
         inited.set_orig(event_handler);

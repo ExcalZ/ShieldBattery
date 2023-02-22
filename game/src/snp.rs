@@ -12,6 +12,7 @@ use winapi::um::synchapi::SetEvent;
 use winapi::um::sysinfoapi::GetTickCount;
 
 use crate::bw;
+use crate::bw::Bw;
 use crate::game_thread::{send_game_msg_to_async, GameThreadMessage};
 use crate::windows::OwnedHandle;
 

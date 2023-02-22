@@ -1,4 +1,5 @@
 use std::ffi::CStr;
+use std::io::Error;
 use std::marker::PhantomData;
 use std::mem;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,10 @@ use parking_lot::{Mutex, RwLock};
 use smallvec::SmallVec;
 use winapi::um::errhandlingapi::SetLastError;
 use winapi::um::libloaderapi::GetModuleHandleW;
+use winapi::um::processthreadsapi::{GetExitCodeProcess, TerminateProcess, PROCESS_INFORMATION};
+use winapi::um::synchapi::WaitForSingleObject;
+use winapi::um::winbase::INFINITE;
+use winapi::um::winnt::HANDLE;
 
 use scr_analysis::{scarf, DatType};
 use sdf_cache::{InitSdfCache, SdfCache};
@@ -185,6 +190,9 @@ pub struct BwScr {
     // Path that reads/writes of CSettings.json will be redirected to
     settings_file_path: RwLock<String>,
     detection_status_copy: Mutex<Vec<u32>>,
+    /// CEF can get itself into a bad state if it launches too early, so we ignore launches until
+    /// after game data has been initialized.
+    allow_cef_launch: AtomicBool,
 }
 
 struct SendPtr<T>(T);
@@ -1316,6 +1324,7 @@ impl BwScr {
             dropped_players: AtomicU32::new(0),
             settings_file_path: RwLock::new(String::new()),
             detection_status_copy: Mutex::new(Vec::new()),
+            allow_cef_launch: AtomicBool::new(false),
         })
     }
 
@@ -1565,7 +1574,10 @@ impl BwScr {
                         (old_x as i32).checked_sub(diff / 2)
                     })();
                     if let Some(new_x) = new_x {
-                        let max_x = self.map_width_pixels.resolve().checked_sub(new_width)
+                        let max_x = self
+                            .map_width_pixels
+                            .resolve()
+                            .checked_sub(new_width)
                             .unwrap_or(0) as i32;
                         let new_x = new_x.clamp(0, max_x) as u32;
                         let y = self.screen_y.resolve();
@@ -1589,6 +1601,7 @@ impl BwScr {
                     (*anti_troll.resolve()).active = 0;
                 }
                 game_thread::after_init_game_data();
+                self.allow_cef_launch.store(true, Ordering::Relaxed);
                 1
             },
             address,
@@ -1744,6 +1757,10 @@ impl BwScr {
             "CopyFileW", CopyFileW, copy_file_hook;
             "CloseHandle", CloseHandle, close_handle_hook;
             "GetTickCount", GetTickCount, get_tick_count_hook;
+        );
+
+        hook_winapi_exports!(&mut active_patcher, "advapi32",
+            "CreateProcessAsUserW", CreateProcessAsUserW, create_process_as_user_hook;
         );
 
         // SCR wants to update gamepad state every frame, but in the end it
@@ -2772,6 +2789,103 @@ fn create_event_hook(
     }
 }
 
+fn create_process_as_user_hook(
+    token: *mut c_void,
+    executable: *const u16,
+    command_line: *mut u16,
+    security: *mut c_void,
+    thread: *mut c_void,
+    inherit_handles: u32,
+    creation_flags: u32,
+    environment: *mut c_void,
+    current_dir: *const u16,
+    startup_info: *mut c_void,
+    process_info: *mut PROCESS_INFORMATION,
+    orig: unsafe extern "C" fn(
+        *mut c_void,
+        *const u16,
+        *mut u16,
+        *mut c_void,
+        *mut c_void,
+        u32,
+        u32,
+        *mut c_void,
+        *const u16,
+        *mut c_void,
+        *mut PROCESS_INFORMATION,
+    ) -> u32,
+) -> u32 {
+    unsafe {
+        debug!(
+            "CreateProcessAsUserW on thread: {:?}",
+            std::thread::current().id()
+        );
+
+        let is_cef = if !executable.is_null() {
+            let executable_len = (0..).find(|&i| *executable.add(i) == 0).unwrap();
+            let executable = std::slice::from_raw_parts(executable, executable_len);
+            let path = PathBuf::from(windows::os_string_from_winapi(executable));
+            debug!("CreateProcessAsUserW for {:?}", path);
+
+            path.file_name()
+                .map(|s| s.to_ascii_lowercase() == "scenecefbrowser.exe")
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        let allow_cef_launch = bw::get_bw().allow_cef_launch.load(Ordering::Relaxed);
+
+        let result = orig(
+            token,
+            executable,
+            command_line,
+            security,
+            thread,
+            inherit_handles,
+            creation_flags,
+            environment,
+            current_dir,
+            startup_info,
+            process_info,
+        );
+
+        // FIXME: This code is very lol please do not leave it in any actual builds
+        if result != 0 {
+            debug!("CreateProcessAsUserW succeeded");
+            let handle = (*process_info).hProcess.clone();
+
+            if is_cef && !allow_cef_launch {
+                debug!("Attempt to launch CEF before it is allowed, terminating immediately");
+                if TerminateProcess(handle, 0) != 0 {
+                    debug!("CEF terminated, we're all safe now")
+                } else {
+                    debug!("Failed to terminate CEF: {:?}", Error::last_os_error());
+                }
+            } else if is_cef {
+                let handle: u32 = std::mem::transmute(handle);
+                std::thread::spawn(move || {
+                    let handle: HANDLE = std::mem::transmute(handle);
+                    WaitForSingleObject(handle, INFINITE);
+                    let mut result = 0u32;
+                    if GetExitCodeProcess(handle, &mut result) != 0 {
+                        debug!("CreateProcessAsUserW process exited with code: {}", result);
+                    } else {
+                        debug!(
+                            "CreateProcessAsUserW -- failed to get exit code: {:?}",
+                            Error::last_os_error()
+                        );
+                    }
+                });
+            }
+        } else {
+            debug!("CreateProcessAsUserW failed: {:?}", Error::last_os_error());
+        }
+
+        result
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Tell that to Bill Gates, clippy :)
 fn create_file_hook(
     bw: &BwScr,
@@ -3087,6 +3201,7 @@ unsafe extern "stdcall" fn snp_load_bind(snp_index: u32, funcs: *mut *const SnpF
 #[allow(bad_style)]
 mod hooks {
     use libc::c_void;
+    use winapi::um::processthreadsapi::PROCESS_INFORMATION;
 
     use crate::bw;
 
@@ -3160,6 +3275,19 @@ mod hooks {
         ) -> usize;
         !0 => XInputGetState(u32, *mut c_void) -> u32;
         !0 => PrepareIssueOrder(@ecx *mut bw::Unit, u32, u32, *mut bw::Unit, u32, u32);
+        !0 => CreateProcessAsUserW(
+            *mut c_void,
+            *const u16,
+            *mut u16,
+            *mut c_void,
+            *mut c_void,
+            u32,
+            u32,
+            *mut c_void,
+            *const u16,
+            *mut c_void,
+            *mut PROCESS_INFORMATION,
+        ) -> u32;
     );
 }
 

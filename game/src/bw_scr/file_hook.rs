@@ -31,6 +31,7 @@ pub fn open_file_hook(
                     return out;
                 }
             }
+
             // This file is so big that it can take hundreds of milliseconds to parse,
             // use empty json array instead.
             if path == b"rez/badnames.json" {
