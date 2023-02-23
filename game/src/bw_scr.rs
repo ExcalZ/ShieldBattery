@@ -199,6 +199,7 @@ pub struct BwScr {
     /// else that needs CEF is shown shortly after the termination (such as the observer UI), no
     /// relaunch will happen and the UI will fail to render.
     allow_step_bnet_controller: AtomicBool,
+    pipe_handle: AtomicU32,
 }
 
 struct SendPtr<T>(T);
@@ -1335,6 +1336,7 @@ impl BwScr {
             settings_file_path: RwLock::new(String::new()),
             detection_status_copy: Mutex::new(Vec::new()),
             allow_step_bnet_controller: AtomicBool::new(true),
+            pipe_handle: AtomicU32::new(0xFFFFFFFF),
         })
     }
 
@@ -1640,7 +1642,6 @@ impl BwScr {
             StepBnetController,
             move |this, orig| {
                 if self.allow_step_bnet_controller.load(Ordering::Relaxed) {
-                    debug!("step_bnet_controller running");
                     orig(this);
                 } else {
                     debug!("step_bnet_controller blocked");
@@ -1762,6 +1763,39 @@ impl BwScr {
             self.check_replay_file_finish(handle);
             orig(handle)
         };
+
+        let write_file_hook =
+            move |handle: *mut c_void,
+                  buffer: *const c_void,
+                  size: u32,
+                  written: *mut u32,
+                  overlapped: *mut c_void,
+                  orig: unsafe extern "C" fn(_, _, _, _, _) -> _| {
+                let pipe_handle: HANDLE =
+                    std::mem::transmute(self.pipe_handle.load(Ordering::Relaxed));
+                if handle == pipe_handle {
+                    debug!("Writing to pipe");
+                }
+
+                orig(handle, buffer, size, written, overlapped)
+            };
+        let read_file_hook =
+            move |handle: *mut c_void,
+                  buffer: *mut c_void,
+                  size: u32,
+                  read: *mut u32,
+                  overlapped: *mut c_void,
+                  orig: unsafe extern "C" fn(_, _, _, _, _) -> _| {
+                let pipe_handle: HANDLE =
+                    std::mem::transmute(self.pipe_handle.load(Ordering::Relaxed));
+
+                if handle == pipe_handle {
+                    debug!("Reading from pipe")
+                }
+
+                orig(handle, buffer, size, read, overlapped)
+            };
+
         let init_time = std::time::Instant::now();
         let init_tick_count = winapi::um::sysinfoapi::GetTickCount();
         let get_tick_count_hook = move |_orig: unsafe extern "C" fn() -> u32| {
@@ -1783,6 +1817,8 @@ impl BwScr {
             "CloseHandle", CloseHandle, close_handle_hook;
             "GetTickCount", GetTickCount, get_tick_count_hook;
             "TerminateProcess", TerminateProcess, terminate_process_hook;
+            "WriteFile", WriteFile, write_file_hook;
+            "ReadFile", ReadFile, read_file_hook;
         );
 
         hook_winapi_exports!(&mut active_patcher, "advapi32",
@@ -2962,6 +2998,7 @@ fn create_file_hook(
     unsafe {
         let mut is_replay = false;
         let mut access = access;
+        let mut is_pipe = false;
         if !filename.is_null() {
             let name_len = (0..).find(|&i| *filename.add(i) == 0).unwrap();
             let filename = std::slice::from_raw_parts(filename, name_len);
@@ -2984,6 +3021,13 @@ fn create_file_hook(
                         access |= GENERIC_READ;
                     }
                 }
+            }
+
+            let os_filename = windows::os_string_from_winapi(filename);
+            let filename_str = os_filename.to_string_lossy();
+            if filename_str.starts_with("//./pipe") {
+                debug!("CreateFileW on pipe: {}", filename_str);
+                is_pipe = true;
             }
 
             if !is_replay {
@@ -3032,6 +3076,20 @@ fn create_file_hook(
         if handle != INVALID_HANDLE_VALUE && is_replay {
             bw.register_possible_replay_handle(handle);
         }
+
+        if is_pipe {
+            if handle != INVALID_HANDLE_VALUE {
+                debug!("Pipe opened successfully");
+                bw::get_bw()
+                    .pipe_handle
+                    .store(std::mem::transmute(handle), Ordering::Relaxed);
+            } else {
+                let last_error = Error::last_os_error();
+                debug!("Opening pipe failed: {:?}", last_error);
+                SetLastError(last_error.raw_os_error().unwrap_or(0) as u32);
+            }
+        }
+
         handle
     }
 }
@@ -3340,6 +3398,20 @@ mod hooks {
             *mut PROCESS_INFORMATION,
         ) -> u32;
         !0 => TerminateProcess(*mut c_void, u32) -> u32;
+        !0 => WriteFile(
+            *mut c_void,
+            *const c_void,
+            u32,
+            *mut u32,
+            *mut c_void,
+        ) -> u32;
+        !0 => ReadFile(
+            *mut c_void,
+            *mut c_void,
+            u32,
+            *mut u32,
+            *mut c_void,
+        ) -> u32;
     );
 }
 
