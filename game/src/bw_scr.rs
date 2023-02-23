@@ -13,11 +13,14 @@ use libc::c_void;
 use parking_lot::{Mutex, RwLock};
 use smallvec::SmallVec;
 use winapi::um::errhandlingapi::SetLastError;
+use winapi::um::handleapi::{CloseHandle, DuplicateHandle, INVALID_HANDLE_VALUE};
 use winapi::um::libloaderapi::GetModuleHandleW;
-use winapi::um::processthreadsapi::{GetExitCodeProcess, TerminateProcess, PROCESS_INFORMATION};
+use winapi::um::processthreadsapi::{
+    GetCurrentProcess, GetExitCodeProcess, GetProcessId, PROCESS_INFORMATION,
+};
 use winapi::um::synchapi::WaitForSingleObject;
 use winapi::um::winbase::INFINITE;
-use winapi::um::winnt::HANDLE;
+use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE};
 
 use scr_analysis::{scarf, DatType};
 use sdf_cache::{InitSdfCache, SdfCache};
@@ -162,6 +165,7 @@ pub struct BwScr {
     step_game_logic: scarf::VirtualAddress,
     net_format_turn_rate: scarf::VirtualAddress,
     update_game_screen_size: scarf::VirtualAddress,
+    step_bnet_controller: scarf::VirtualAddress,
     lobby_create_callback_offset: usize,
     starcraft_tls_index: SendPtr<*mut u32>,
 
@@ -190,9 +194,11 @@ pub struct BwScr {
     // Path that reads/writes of CSettings.json will be redirected to
     settings_file_path: RwLock<String>,
     detection_status_copy: Mutex<Vec<u32>>,
-    /// CEF can get itself into a bad state if it launches too early, so we ignore launches until
-    /// after game data has been initialized.
-    allow_cef_launch: AtomicBool,
+    /// CEF can get itself into a bad state if it launches too early, as step_bnet_controller will
+    /// terminate it (for reasons unknown), but doesn't track the state well enough. If something
+    /// else that needs CEF is shown shortly after the termination (such as the observer UI), no
+    /// relaunch will happen and the UI will fail to render.
+    allow_step_bnet_controller: AtomicBool,
 }
 
 struct SendPtr<T>(T);
@@ -1168,6 +1174,9 @@ impl BwScr {
         let update_game_screen_size = analysis
             .update_game_screen_size()
             .ok_or("update_game_screen_size")?;
+        let step_bnet_controller = analysis
+            .step_bnet_controller()
+            .ok_or("step_bnet_controller")?;
 
         let uses_new_join_param_variant = match analysis.join_param_variant_type_offset() {
             Some(0) => false,
@@ -1282,6 +1291,7 @@ impl BwScr {
             ttf_malloc: unsafe { mem::transmute(ttf_malloc.0) },
             process_game_commands: unsafe { mem::transmute(process_game_commands.0) },
             move_screen: unsafe { mem::transmute(move_screen.0) },
+            step_bnet_controller,
             load_snp_list,
             start_udp_server,
             mainmenu_entry_hook,
@@ -1324,7 +1334,7 @@ impl BwScr {
             dropped_players: AtomicU32::new(0),
             settings_file_path: RwLock::new(String::new()),
             detection_status_copy: Mutex::new(Vec::new()),
-            allow_cef_launch: AtomicBool::new(false),
+            allow_step_bnet_controller: AtomicBool::new(true),
         })
     }
 
@@ -1600,8 +1610,9 @@ impl BwScr {
                 if let Some(anti_troll) = self.anti_troll {
                     (*anti_troll.resolve()).active = 0;
                 }
+                self.allow_step_bnet_controller
+                    .store(true, Ordering::Relaxed);
                 game_thread::after_init_game_data();
-                self.allow_cef_launch.store(true, Ordering::Relaxed);
                 1
             },
             address,
@@ -1620,6 +1631,20 @@ impl BwScr {
             StepReplayCommands,
             |orig| {
                 game_thread::step_replay_commands(orig);
+            },
+            address,
+        );
+
+        let address = self.step_bnet_controller.0 as usize - base;
+        exe.hook_closure_address(
+            StepBnetController,
+            move |this, orig| {
+                if self.allow_step_bnet_controller.load(Ordering::Relaxed) {
+                    debug!("step_bnet_controller running");
+                    orig(this);
+                } else {
+                    debug!("step_bnet_controller blocked");
+                }
             },
             address,
         );
@@ -1757,6 +1782,7 @@ impl BwScr {
             "CopyFileW", CopyFileW, copy_file_hook;
             "CloseHandle", CloseHandle, close_handle_hook;
             "GetTickCount", GetTickCount, get_tick_count_hook;
+            "TerminateProcess", TerminateProcess, terminate_process_hook;
         );
 
         hook_winapi_exports!(&mut active_patcher, "advapi32",
@@ -2789,6 +2815,22 @@ fn create_event_hook(
     }
 }
 
+fn terminate_process_hook(
+    process: *mut c_void,
+    exit_code: u32,
+    orig: unsafe extern "C" fn(*mut c_void, u32) -> u32,
+) -> u32 {
+    unsafe {
+        let process_id = GetProcessId(process);
+        let game_state = bw::get_bw().game_state.resolve();
+        debug!(
+            "TerminateProcess({}, {}) -- game state: {}",
+            process_id, exit_code, game_state
+        );
+        orig(process, exit_code)
+    }
+}
+
 fn create_process_as_user_hook(
     token: *mut c_void,
     executable: *const u16,
@@ -2816,16 +2858,15 @@ fn create_process_as_user_hook(
     ) -> u32,
 ) -> u32 {
     unsafe {
-        debug!(
-            "CreateProcessAsUserW on thread: {:?}",
-            std::thread::current().id()
-        );
-
         let is_cef = if !executable.is_null() {
             let executable_len = (0..).find(|&i| *executable.add(i) == 0).unwrap();
             let executable = std::slice::from_raw_parts(executable, executable_len);
             let path = PathBuf::from(windows::os_string_from_winapi(executable));
-            debug!("CreateProcessAsUserW for {:?}", path);
+            let game_state = bw::get_bw().game_state.resolve();
+            debug!(
+                "CreateProcessAsUserW for {:?} -- game state: {}",
+                path, game_state
+            );
 
             path.file_name()
                 .map(|s| s.to_ascii_lowercase() == "scenecefbrowser.exe")
@@ -2833,8 +2874,6 @@ fn create_process_as_user_hook(
         } else {
             false
         };
-
-        let allow_cef_launch = bw::get_bw().allow_cef_launch.load(Ordering::Relaxed);
 
         let result = orig(
             token,
@@ -2852,31 +2891,43 @@ fn create_process_as_user_hook(
 
         // FIXME: This code is very lol please do not leave it in any actual builds
         if result != 0 {
-            debug!("CreateProcessAsUserW succeeded");
-            let handle = (*process_info).hProcess.clone();
-
-            if is_cef && !allow_cef_launch {
-                debug!("Attempt to launch CEF before it is allowed, terminating immediately");
-                if TerminateProcess(handle, 0) != 0 {
-                    debug!("CEF terminated, we're all safe now")
-                } else {
-                    debug!("Failed to terminate CEF: {:?}", Error::last_os_error());
+            debug!(
+                "CreateProcessAsUserW succeeded, id: {}",
+                (*process_info).dwProcessId
+            );
+            let mut handle = INVALID_HANDLE_VALUE;
+            if DuplicateHandle(
+                GetCurrentProcess(),
+                (*process_info).hProcess,
+                GetCurrentProcess(),
+                &mut handle,
+                0,
+                0,
+                DUPLICATE_SAME_ACCESS,
+            ) == 0
+            {
+                debug!(
+                    "CreateProcessAsUserW -- failed to duplicate handle: {:?}",
+                    Error::last_os_error()
+                );
+            } else {
+                if is_cef {
+                    let handle: u32 = std::mem::transmute(handle);
+                    std::thread::spawn(move || {
+                        let handle: HANDLE = std::mem::transmute(handle);
+                        WaitForSingleObject(handle, INFINITE);
+                        let mut result = 0u32;
+                        if GetExitCodeProcess(handle, &mut result) != 0 {
+                            debug!("CreateProcessAsUserW process exited with code: {}", result);
+                        } else {
+                            debug!(
+                                "CreateProcessAsUserW -- failed to get exit code: {:?}",
+                                Error::last_os_error()
+                            );
+                        }
+                        CloseHandle(handle);
+                    });
                 }
-            } else if is_cef {
-                let handle: u32 = std::mem::transmute(handle);
-                std::thread::spawn(move || {
-                    let handle: HANDLE = std::mem::transmute(handle);
-                    WaitForSingleObject(handle, INFINITE);
-                    let mut result = 0u32;
-                    if GetExitCodeProcess(handle, &mut result) != 0 {
-                        debug!("CreateProcessAsUserW process exited with code: {}", result);
-                    } else {
-                        debug!(
-                            "CreateProcessAsUserW -- failed to get exit code: {:?}",
-                            Error::last_os_error()
-                        );
-                    }
-                });
             }
         } else {
             debug!("CreateProcessAsUserW failed: {:?}", Error::last_os_error());
@@ -2907,7 +2958,6 @@ fn create_file_hook(
     ) -> *mut c_void,
 ) -> *mut c_void {
     use winapi::um::fileapi::{CREATE_ALWAYS, CREATE_NEW};
-    use winapi::um::handleapi::INVALID_HANDLE_VALUE;
     use winapi::um::winnt::GENERIC_READ;
     unsafe {
         let mut is_replay = false;
@@ -3246,6 +3296,7 @@ mod hooks {
         !0 => NetFormatTurnRate(*mut scr::NetFormatTurnRateResult, bool) ->
             *mut scr::NetFormatTurnRateResult;
         !0 => UpdateGameScreenSize(f32);
+        !0 => StepBnetController(@ecx *mut c_void);
     );
 
     whack_hooks!(stdcall, 0,
@@ -3288,6 +3339,7 @@ mod hooks {
             *mut c_void,
             *mut PROCESS_INFORMATION,
         ) -> u32;
+        !0 => TerminateProcess(*mut c_void, u32) -> u32;
     );
 }
 

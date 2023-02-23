@@ -480,4 +480,8 @@ impl<'e> Analysis<'e> {
     pub fn game_screen_width_bwpx(&mut self) -> Option<Operand<'e>> {
         self.0.game_screen_width_bwpx()
     }
+
+    pub fn step_bnet_controller(&mut self) -> Option<VirtualAddress> {
+        self.0.step_bnet_controller()
+    }
 }
