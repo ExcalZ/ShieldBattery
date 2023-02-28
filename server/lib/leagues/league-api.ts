@@ -13,13 +13,15 @@ import {
 } from '../../../common/leagues'
 import transact from '../db/transaction'
 import { writeFile } from '../file-upload'
-import handleMultipartFiles from '../file-upload/handle-multipart-files'
+import { handleMultipartFiles } from '../file-upload/handle-multipart-files'
 import { httpApi, httpBeforeAll } from '../http/http-api'
 import { httpBefore, httpGet, httpPost } from '../http/route-decorators'
 import { checkAllPermissions } from '../permissions/check-permissions'
 import ensureLoggedIn from '../session/ensure-logged-in'
 import { validateRequest } from '../validation/joi-validator'
 import { createLeague, getAllLeagues } from './league-models'
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024
 
 @httpApi('/admin/leagues/')
 @httpBeforeAll(ensureLoggedIn, checkAllPermissions('manageLeagues'))
@@ -31,7 +33,7 @@ export class LeagueAdminApi {
   }
 
   @httpPost('/')
-  @httpBefore(handleMultipartFiles)
+  @httpBefore(handleMultipartFiles(MAX_IMAGE_SIZE))
   async addLeague(ctx: RouterContext): Promise<AdminAddLeagueResponse> {
     const { body } = validateRequest(ctx, {
       body: Joi.object<ServerAdminAddLeagueRequest>({
