@@ -1,31 +1,8 @@
 import sql from 'sql-template-strings'
-import { Opaque } from 'type-fest'
 import { assertUnreachable } from '../../../common/assert-unreachable'
+import { League, LeagueId } from '../../../common/leagues'
 import db, { DbClient } from '../db'
 import { Dbify } from '../db/types'
-
-export type LeagueId = Opaque<string, 'LeagueId'>
-
-/**
- * Converts a league ID string to a properly typed version. Prefer better ways of getting a typed
- * version, such as retrieving the value from the database or using a Joi validator. This method
- * should mainly be considered for testing and internal behavior.
- */
-export function makeLeagueId(id: string): LeagueId {
-  return id as LeagueId
-}
-
-export interface League {
-  id: LeagueId
-  name: string
-  description: string
-  signupsAfter: Date
-  startAt: Date
-  endAt: Date
-  imagePath?: string
-  rulesAndInfo?: string
-  link?: string
-}
 
 type DbLeague = Dbify<League>
 
