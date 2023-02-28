@@ -29,7 +29,9 @@ use crate::windows;
 use crate::{game_thread, GameThreadMessage};
 
 mod bw_hash_table;
+mod bw_vector;
 mod dialog_hook;
+mod draw_inject;
 mod file_hook;
 mod game;
 mod pe_image;
@@ -89,6 +91,9 @@ pub struct BwScr {
     /// Value is larger on 16:9, as well as when zooming out.
     game_screen_width_bwpx: Value<u32>,
     units: Value<*mut scr::BwVector>,
+    renderer: Value<*mut scr::Renderer>,
+    draw_commands: Value<*mut scr::DrawCommands>,
+    vertex_buffer: Value<*mut scr::VertexBuffer>,
     replay_bfix: Option<Value<*mut scr::ReplayBfix>>,
     replay_gcfg: Option<Value<*mut scr::ReplayGcfg>>,
     anti_troll: Option<Value<*mut scr::AntiTroll>>,
@@ -135,6 +140,7 @@ pub struct BwScr {
     snet_send_packets: unsafe extern "C" fn(),
     process_game_commands: unsafe extern "C" fn(*const u8, usize, u32),
     move_screen: unsafe extern "C" fn(u32, u32),
+    get_render_target: unsafe extern "C" fn(u32) -> *mut scr::RenderTarget,
     mainmenu_entry_hook: scarf::VirtualAddress,
     load_snp_list: scarf::VirtualAddress,
     start_udp_server: scarf::VirtualAddress,
@@ -193,8 +199,6 @@ unsafe impl<T> Sync for SendPtr<T> {}
 
 /// Keeps track of pointers to renderer structures as they are collected
 struct RendererState {
-    #[allow(dead_code)] // Plan is to use this ~soon~
-    renderer: Option<*mut c_void>,
     shader_inputs: Vec<ShaderState>,
 }
 
@@ -206,10 +210,6 @@ struct ShaderState {
 }
 
 impl RendererState {
-    unsafe fn set_renderer(&mut self, renderer: *mut c_void) {
-        self.renderer = Some(renderer);
-    }
-
     unsafe fn set_shader_inputs(
         &mut self,
         shader: *mut scr::Shader,
@@ -245,6 +245,8 @@ pub mod scr {
     use crate::bw_scr::{bw_free, bw_malloc};
 
     use super::thiscall::Thiscall;
+
+    pub use bw_dat::structs::scr::{DrawCommand, DrawCommands, DrawSubCommands};
 
     #[repr(C)]
     pub struct SnpLoadFuncs {
@@ -591,19 +593,6 @@ pub mod scr {
     }
 
     #[repr(C)]
-    pub struct DrawCommands {
-        pub commands: [DrawCommand; 0x2000],
-    }
-
-    #[repr(C)]
-    pub struct DrawCommand {
-        pub data: [u8; 0x28],
-        pub shader_id: u32,
-        pub more_data: [u8; 0x24],
-        pub shader_constants: [f32; 0x14],
-    }
-
-    #[repr(C)]
     pub struct Shader {
         pub id: u32,
         pub rest: [u8; 0x74],
@@ -670,6 +659,121 @@ pub mod scr {
         pub text: BwString,
     }
 
+    #[repr(C)]
+    pub struct Renderer {
+        pub vtable: *const V_Renderer
+    }
+
+    #[repr(C)]
+    pub struct V_Renderer {
+        pub clone: usize,
+        pub init_sub: usize,
+        pub init: usize,
+        pub unk3: usize,
+        pub unk4: usize,
+        pub swap_buffers: usize,
+        pub unk6: usize,
+        pub draw: Thiscall<
+            unsafe extern "C" fn(
+                *mut Renderer,
+                *mut DrawCommands,
+                u32,
+                u32,
+            ) -> u32,
+        >,
+        pub clear_color: usize,
+        pub unk9: usize,
+        pub upload_vertices: usize,
+        pub unkb: usize,
+        /// format, data, data_len, width, height, filtering, wrap_mode
+        pub create_texture: Thiscall<
+            unsafe extern "C" fn(
+                *mut Renderer,
+                u32,
+                *const u8,
+                usize,
+                u32,
+                u32,
+                u32,
+                u32,
+            ) -> *mut RendererTexture,
+        >,
+        pub unkd: usize,
+        /// texture, x, y, width, height, data, row_length, format, filtering, wrap_mode
+        pub update_texture: Thiscall<
+            unsafe extern "C" fn(
+                *mut Renderer,
+                *mut RendererTexture,
+                u32,
+                u32,
+                u32,
+                u32,
+                *const u8,
+                u32,
+                u32,
+                u32,
+                u32,
+            )
+        >,
+        pub delete_texture: usize,
+        pub create_shader: Thiscall<
+            unsafe extern "C" fn(
+                *mut Renderer,
+                *mut Shader,
+                *const u8,
+                *const u8,
+                *const u8,
+                *mut c_void,
+            ) -> usize,
+        >,
+    }
+
+    /// Opaque struct
+    #[repr(C)]
+    pub struct RendererTexture {
+    }
+
+    // Checked to have correct layout on both 32/64 bit
+    #[repr(C)]
+    pub struct VertexBuffer {
+        pub buffer_size_u32s: usize,
+        pub allocated_size_bytes: usize,
+        pub buffer: BwVector,
+        pub subbuffers: BwVector,
+        pub heap_allocated: u8,
+        pub unk_size: usize,
+        pub subbuffer_sizes: usize,
+        pub unk2c: usize,
+        pub index_buf_size_u16s: usize,
+        pub index_buffer_allocated_bytes: usize,
+        pub index_buffer: BwVector,
+        pub index_buf_heap_allocated: u8,
+        pub unk_vertex_buffer_data: *mut c_void,
+    }
+
+    // TODO probably not correct on 64bit
+    #[repr(C)]
+    pub struct RenderTarget {
+        pub x: i32,
+        pub y: i32,
+        pub width: u32,
+        pub height: u32,
+        pub attachments: u32,
+        pub unk14: [u32; 2],
+        pub backend_target: *mut c_void,
+    }
+
+    /// Used to sort DrawCommands to be drawn in correct order when rendering.
+    /// One DrawSort must exist for each DrawCommand used.
+    #[repr(C)]
+    pub struct DrawSort {
+        pub layer: u16,
+        // Self index when pushed to vector
+        // Probably used to break ties when layer is same
+        pub index: u16,
+        pub command: *mut DrawCommand,
+    }
+
     unsafe impl Sync for PrismShader {}
     unsafe impl Send for PrismShader {}
 
@@ -688,6 +792,10 @@ pub mod scr {
         assert_eq!(size_of::<DrawCommand>(), 0xa0);
         assert_eq!(size_of::<Shader>(), 0x78);
         assert_eq!(size_of::<Sprite>(), 0x28);
+        assert_eq!(size_of::<V_Renderer>(), 0x40);
+        assert_eq!(size_of::<VertexBuffer>(), 0x4c);
+        assert_eq!(size_of::<RenderTarget>(), 0x20);
+        assert_eq!(size_of::<DrawSort>(), 0x8);
     }
 }
 
@@ -1150,6 +1258,9 @@ impl BwScr {
         let step_game_logic = analysis.step_game_logic().ok_or("step_game_logic")?;
         let anti_troll = analysis.anti_troll();
         let units = analysis.units().ok_or("units")?;
+        let renderer = analysis.renderer().ok_or("renderer")?;
+        let draw_commands = analysis.draw_commands().ok_or("draw_commands")?;
+        let vertex_buffer = analysis.vertex_buffer().ok_or("vertex_buffer")?;
         let map_width_pixels = analysis.map_width_pixels().ok_or("map_width_pixels")?;
         let screen_x = analysis.screen_x().ok_or("screen_x")?;
         let screen_y = analysis.screen_y().ok_or("screen_y")?;
@@ -1160,6 +1271,7 @@ impl BwScr {
         let update_game_screen_size = analysis
             .update_game_screen_size()
             .ok_or("update_game_screen_size")?;
+        let get_render_target = analysis.get_render_target().ok_or("get_render_target")?;
 
         let uses_new_join_param_variant = match analysis.join_param_variant_type_offset() {
             Some(0) => false,
@@ -1236,6 +1348,9 @@ impl BwScr {
             allocated_order_count: Value::new(ctx, allocated_order_count),
             order_limit: Value::new(ctx, order_limit),
             units: Value::new(ctx, units),
+            renderer: Value::new(ctx, renderer),
+            draw_commands: Value::new(ctx, draw_commands),
+            vertex_buffer: Value::new(ctx, vertex_buffer),
             map_width_pixels: Value::new(ctx, map_width_pixels),
             screen_x: Value::new(ctx, screen_x),
             screen_y: Value::new(ctx, screen_y),
@@ -1274,6 +1389,7 @@ impl BwScr {
             ttf_malloc: unsafe { mem::transmute(ttf_malloc.0) },
             process_game_commands: unsafe { mem::transmute(process_game_commands.0) },
             move_screen: unsafe { mem::transmute(move_screen.0) },
+            get_render_target: unsafe { mem::transmute(get_render_target.0) },
             load_snp_list,
             start_udp_server,
             mainmenu_entry_hook,
@@ -1302,7 +1418,6 @@ impl BwScr {
             disable_hd,
             shader_replaces: ShaderReplaces::new(),
             renderer_state: Mutex::new(RendererState {
-                renderer: None,
                 shader_inputs: Vec::with_capacity(0x30),
             }),
             open_replay_file_count: AtomicUsize::new(0),
@@ -1777,11 +1892,12 @@ impl BwScr {
 
     unsafe fn patch_shaders(&'static self, exe: &mut whack::ModulePatcher<'_>, base: usize) {
         use self::hooks::*;
-        let renderer_vtable = self.prism_renderer_vtable.0 as usize as *mut usize;
+        let renderer_vtable = self.prism_renderer_vtable.0 as *const scr::V_Renderer;
 
-        let create_shader = *renderer_vtable.add(0x10);
+        let draw = (*renderer_vtable).draw;
+        let create_shader = (*renderer_vtable).create_shader;
         // Render hook
-        let relative = *renderer_vtable.add(0x7) - base;
+        let relative = draw.cast_usize() - base;
         exe.hook_closure_address(
             Renderer_Render,
             move |renderer, commands, width, height, orig| {
@@ -1791,16 +1907,6 @@ impl BwScr {
                     // memory is not currently possible.
                     // Will have to write over the previously allocated scr::PrismShader slice
                     // instead.
-                    let create_shader: Thiscall<
-                        unsafe extern "C" fn(
-                            *mut c_void,
-                            *mut scr::Shader,
-                            *const u8,
-                            *const u8,
-                            *const u8,
-                            *mut c_void,
-                        ) -> usize,
-                    > = Thiscall::wrap_thiscall(create_shader);
                     for (id, new_set) in self.shader_replaces.iter_shaders() {
                         if let Some(shader_set) = self.prism_pixel_shaders.get(id as usize) {
                             let shader_set = shader_set.0 as usize as *mut scr::PrismShaderSet;
@@ -1850,19 +1956,20 @@ impl BwScr {
                         cmd.shader_constants[1] = show_network_stalled;
                     }
                 }
+                let vertex_buffer = self.vertex_buffer.resolve();
+                draw_inject::add_overlays(commands, vertex_buffer, self);
                 orig(renderer, commands, width, height)
             },
             relative,
         );
 
         // CreateShader hook
-        let relative = create_shader as usize - base;
+        let relative = create_shader.cast_usize() - base;
         exe.hook_closure_address(
             Renderer_CreateShader,
             move |renderer, shader, text, vertex, pixel, arg5, orig| {
                 {
                     let mut renderer_state = self.renderer_state.lock();
-                    renderer_state.set_renderer(renderer);
                     renderer_state.set_shader_inputs(shader, vertex, pixel);
                 }
                 orig(renderer, shader, text, vertex, pixel, arg5)
@@ -3149,9 +3256,9 @@ mod hooks {
         ) -> *mut c_void;
         !0 => CopyFileW(*const u16, *const u16, u32) -> u32;
         !0 => StepIo(@ecx *mut c_void);
-        !0 => Renderer_Render(@ecx *mut c_void, *mut scr::DrawCommands, u32, u32) -> u32;
+        !0 => Renderer_Render(@ecx *mut scr::Renderer, *mut scr::DrawCommands, u32, u32) -> u32;
         !0 => Renderer_CreateShader(
-            @ecx *mut c_void,
+            @ecx *mut scr::Renderer,
             *mut scr::Shader,
             *const u8,
             *const u8,

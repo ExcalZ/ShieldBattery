@@ -61,7 +61,7 @@ rev = "ccd95f5cfa37622bc3ec3d4b0974ab9b631b59b2"
 # Struct declarations & convenience functions for ingame BW data
 [dependencies.bw_dat]
 git = "https://github.com/neivv/aise.git"
-rev = "afa10eed358ab1e4322ed54e3da809e5494c2a33"
+rev = "fbbdf1d2772db25437dc40c2e07d0ff01c5d4fb9"
 
 [build-dependencies]
 anyhow = "1.0.33"

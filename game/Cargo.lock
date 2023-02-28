@@ -95,7 +95,7 @@ checksum = "c1ad822118d20d2c234f427000d5acc36eabe1e29a348c89b63dd60b13f28e5d"
 [[package]]
 name = "bw_dat"
 version = "0.1.0"
-source = "git+https://github.com/neivv/aise.git?rev=afa10eed358ab1e4322ed54e3da809e5494c2a33#afa10eed358ab1e4322ed54e3da809e5494c2a33"
+source = "git+https://github.com/neivv/aise.git?rev=fbbdf1d2772db25437dc40c2e07d0ff01c5d4fb9#fbbdf1d2772db25437dc40c2e07d0ff01c5d4fb9"
 dependencies = [
  "bitflags",
  "fxhash",
@@ -1087,7 +1087,7 @@ checksum = "4501abdff3ae82a1c1b477a17252eb69cee9e66eb915c1abaa4f44d873df9f09"
 [[package]]
 name = "samase_scarf"
 version = "0.1.0"
-source = "git+https://github.com/neivv/samase_scarf.git?rev=95176782bea5b6b4e81f8ac49f9b71df98a9ff17#95176782bea5b6b4e81f8ac49f9b71df98a9ff17"
+source = "git+https://github.com/neivv/samase_scarf.git?rev=00ef362efa7ebccdb708bd1497cc21a91329bbb2#00ef362efa7ebccdb708bd1497cc21a91329bbb2"
 dependencies = [
  "array-init",
  "arrayvec",
@@ -1103,7 +1103,7 @@ dependencies = [
 [[package]]
 name = "scarf"
 version = "0.3.0"
-source = "git+https://github.com/neivv/scarf?rev=323442a2bed53d3cc608c36149cbacc1d90784d3#323442a2bed53d3cc608c36149cbacc1d90784d3"
+source = "git+https://github.com/neivv/scarf?rev=550580dddfec9aae0b168a67885ffd8400844153#550580dddfec9aae0b168a67885ffd8400844153"
 dependencies = [
  "array-init",
  "arrayvec",

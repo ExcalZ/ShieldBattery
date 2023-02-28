@@ -480,4 +480,20 @@ impl<'e> Analysis<'e> {
     pub fn game_screen_width_bwpx(&mut self) -> Option<Operand<'e>> {
         self.0.game_screen_width_bwpx()
     }
+
+    pub fn renderer(&mut self) -> Option<Operand<'e>> {
+        self.0.renderer()
+    }
+
+    pub fn draw_commands(&mut self) -> Option<Operand<'e>> {
+        self.0.draw_commands()
+    }
+
+    pub fn vertex_buffer(&mut self) -> Option<Operand<'e>> {
+        self.0.vertex_buffer()
+    }
+
+    pub fn get_render_target(&mut self) -> Option<VirtualAddress> {
+        self.0.get_render_target()
+    }
 }
