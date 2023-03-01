@@ -4,9 +4,9 @@ use bytemuck::{Pod, Zeroable};
 use hashbrown::HashMap;
 use quick_error::{quick_error};
 
-use super::bw_vector::{bw_vector_push};
 use crate::bw::Bw;
 
+use super::bw_vector::{bw_vector_push, bw_vector_reserve};
 use super::scr;
 use super::{BwScr};
 
@@ -279,11 +279,6 @@ unsafe fn vertex_buf_capacity_bytes(vertex_buf: *mut scr::VertexBuffer) -> usize
     (*vertex_buf).buffer_size_u32s * 4
 }
 
-#[cold]
-unsafe fn vertex_buf_grow(vertex_buf: *mut scr::VertexBuffer) {
-    todo!()
-}
-
 unsafe fn allocate_indices(
     vertex_buf: *mut scr::VertexBuffer,
     count: u32,
@@ -308,8 +303,29 @@ unsafe fn index_buf_capacity_bytes(vertex_buf: *mut scr::VertexBuffer) -> usize 
 }
 
 #[cold]
+unsafe fn vertex_buf_grow(vertex_buf: *mut scr::VertexBuffer) {
+    // You may think that this should check if heap_allocated was
+    // 0 and not assume that there's a vector to be freed..
+    // But it doesn't work like that for some reason
+    // Maybe `heap_allocated` is wrong name? Maybe it should
+    // be buffer_inited or something. Can probably also just always
+    // assume it to be 1 anyway.
+    let new_capacity = (*vertex_buf).buffer_size_u32s * 2;
+    (*vertex_buf).buffer_size_u32s = new_capacity;
+    (*vertex_buf).heap_allocated = 1;
+    let vector = addr_of_mut!((*vertex_buf).buffer);
+    bw_vector_reserve::<f32>(vector, new_capacity);
+    (*vector).length = new_capacity;
+}
+
+#[cold]
 unsafe fn index_buf_grow(vertex_buf: *mut scr::VertexBuffer) {
-    todo!()
+    let new_capacity = (*vertex_buf).index_buf_size_u16s * 2;
+    (*vertex_buf).index_buf_size_u16s = new_capacity;
+    (*vertex_buf).index_buf_heap_allocated = 1;
+    let vector = addr_of_mut!((*vertex_buf).index_buffer);
+    bw_vector_reserve::<u16>(vector, new_capacity);
+    (*vector).length = new_capacity;
 }
 
 /// Releases texture on drop,
