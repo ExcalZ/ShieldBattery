@@ -1,30 +1,42 @@
 use std::ptr::{self, addr_of_mut, null_mut};
 
 use bytemuck::{Pod, Zeroable};
+use egui::{TexturesDelta, TextureId};
+use egui::epaint;
+use egui::epaint::textures::{TextureFilter};
 use hashbrown::HashMap;
 use quick_error::{quick_error};
 
-use crate::bw::Bw;
-
 use super::bw_vector::{bw_vector_push, bw_vector_reserve};
+use super::draw_overlay;
 use super::scr;
 use super::{BwScr};
 
+macro_rules! warn_once {
+    ($($tokens:tt)*) => {{
+        // This is probably spammy if it ever happens, warning only once
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| warn!($($tokens)*));
+    }}
+}
+
 /// State persisted across draws
-pub struct OverlayState {
-    textures: HashMap<u64, OwnedBwTexture>,
+pub struct RenderState {
+    textures: HashMap<TextureId, OwnedBwTexture>,
+    temp_buffer: Vec<u8>,
 }
 
 /// Most of this isn't probably safe to use outside renderer (main) thread,
 /// but will have to implement this anyway to have it be storable
 /// in global BwScr.
-unsafe impl Send for OverlayState {}
-unsafe impl Sync for OverlayState {}
+unsafe impl Send for RenderState {}
+unsafe impl Sync for RenderState {}
 
-impl OverlayState {
-    pub fn new() -> OverlayState {
-        OverlayState {
+impl RenderState {
+    pub fn new() -> RenderState {
+        RenderState {
             textures: HashMap::with_capacity(16),
+            temp_buffer: Vec::new(),
         }
     }
 }
@@ -43,9 +55,22 @@ quick_error! {
     }
 }
 
-struct RenderTarget {
-    bw: *mut scr::RenderTarget,
-    id: u32,
+pub struct RenderTarget {
+    pub bw: *mut scr::RenderTarget,
+    pub id: u32,
+    pub w_recip: f32,
+    pub h_recip: f32,
+}
+
+impl RenderTarget {
+    pub unsafe fn new(bw: *mut scr::RenderTarget, id: u32) -> RenderTarget {
+        RenderTarget {
+            bw,
+            id,
+            w_recip: 1.0 / (*bw).width as f32,
+            h_recip: 1.0 / (*bw).height as f32,
+        }
+    }
 }
 
 #[repr(C)]
@@ -78,97 +103,73 @@ impl<T: Copy> VertexBufferAlloc<T> {
     }
 }
 
+fn egui_vertex_to_colored_vertex(
+    render_target: &RenderTarget,
+    vertex: &epaint::Vertex,
+) -> ColoredVertex {
+    ColoredVertex {
+        // egui vertex position is in 0.0 .. screen_points range with origin in top left,
+        // while BW wants the vertex in 0.0 .. 1.0 range with origin in bottom left
+        pos: [vertex.pos.x * render_target.w_recip, 1.0 - vertex.pos.y * render_target.h_recip],
+        texture: [vertex.uv.x, vertex.uv.y],
+        color: u32::from_le_bytes(vertex.color.to_array()),
+    }
+}
+
 pub unsafe fn add_overlays(
-    state: &mut OverlayState,
+    state: &mut RenderState,
     renderer: *mut scr::Renderer,
     commands: *mut scr::DrawCommands,
     vertex_buf: *mut scr::VertexBuffer,
+    overlay_out: &draw_overlay::StepOutput,
+    render_target: &RenderTarget,
     bw: &BwScr,
 ) {
-    // Render target 1 is for UI layers (0xb to 0x1d inclusive)
-    let render_target = RenderTarget {
-        bw: (bw.get_render_target)(1),
-        id: 1,
-    };
-    let texture = state.textures.entry(0)
-        .or_insert_with(|| {
-            let mut data = Vec::new();
-            for i in 0..256 {
-                for j in 0..256 {
-                    data.push(i as u8);
-                    data.push(j as u8);
-                    data.push(0);
-                    data.push(255);
+    update_textures(renderer, state, &overlay_out.textures_delta);
+    let layer = 0x17;
+    let mut triangles_drawn = 0u32;
+    for primitive in &overlay_out.primitives {
+        // Primitive also has clip rect, how to translate it to BW DrawCommand?
+        match primitive.primitive {
+            epaint::Primitive::Mesh(ref mesh) => {
+                // Doing one DrawCommand per triangle for now..
+                // Inefficient and worth trying to change sooner than later,
+                // but not trying figure out what BW expects from it right now.
+                if let Some(texture) = state.textures.get(&mesh.texture_id) {
+                    for indices in mesh.indices.chunks_exact(3) {
+                        let vertex1 = &mesh.vertices[indices[0] as usize];
+                        let vertex2 = &mesh.vertices[indices[1] as usize];
+                        let vertex3 = &mesh.vertices[indices[2] as usize];
+                        let vertices = [
+                            egui_vertex_to_colored_vertex(render_target, vertex1),
+                            egui_vertex_to_colored_vertex(render_target, vertex2),
+                            egui_vertex_to_colored_vertex(render_target, vertex3),
+                        ];
+                        if let Err(e) = triangle(
+                            layer,
+                            texture.bw(),
+                            &vertices,
+                            commands,
+                            vertex_buf,
+                            render_target,
+                        ) {
+                            warn_once!("Failed to draw triangle: {e}");
+                        }
+                        triangles_drawn += 1;
+                    }
+                } else {
+                    warn_once!("Texture {:?} not found", mesh.texture_id);
                 }
             }
-            OwnedBwTexture::new_rgba(renderer, (256, 256), &data, false)
-                .expect("Failed to create texture")
-        });
-    let frame = (*bw.game()).frame_count;
-    let mut update_bytes = Vec::new();
-    for i in 0..64 {
-        for j in 0..64 {
-            let red = (frame as u8).wrapping_add((i as u8) << 2);
-            let green = ((j as u8) << 2).wrapping_sub(frame as u8);
-            update_bytes.push(red);
-            update_bytes.push(green);
-            update_bytes.push(0);
-            update_bytes.push(255);
+            epaint::Primitive::Callback(..) => {
+                // Probably not going to get created without ui code explicitly
+                // asking for PaintCallback?
+                warn_once!("Unimplemented paint callback");
+            }
         }
     }
-    texture.update(&update_bytes, (96, 96), (64, 64));
-    for i in 0x0..=0xe {
-        let layer = 0x10 + i;
-        let x_base = 0.1 + 0.2 * (i & 3) as f32;
-        let y_base = 0.1 + 0.2 * (i >> 2) as f32;
-        let right = x_base + 0.15;
-        let top = y_base + 0.15;
-        let color = 0xff_ff_ff_ff;
-        let vertices = [
-            ColoredVertex {
-                pos: [x_base, top],
-                texture: [0.0, 0.0],
-                color,
-            },
-            ColoredVertex {
-                pos: [x_base, y_base],
-                texture: [0.0, 1.0],
-                color,
-            },
-            ColoredVertex {
-                pos: [right, top],
-                texture: [1.0, 0.0],
-                color,
-            },
-        ];
-        if let Err(e) =
-            triangle(layer, texture.bw(), &vertices, commands, vertex_buf, &render_target)
-        {
-            error!("Failed to draw triangle: {e}");
-        }
-        let vertices = [
-            ColoredVertex {
-                pos: [right, y_base],
-                texture: [1.0, 1.0],
-                color,
-            },
-            ColoredVertex {
-                pos: [x_base, y_base],
-                texture: [0.0, 1.0],
-                color,
-            },
-            ColoredVertex {
-                pos: [right, top],
-                texture: [1.0, 0.0],
-                color,
-            },
-        ];
-        if let Err(e) =
-            triangle(layer, texture.bw(), &vertices, commands, vertex_buf, &render_target)
-        {
-            error!("Failed to draw triangle: {e}");
-        }
-    }
+    debug!("Added {triangles_drawn} egui triangles, render target size {}x{}", (*render_target.bw).width, (*render_target.bw).height);
+    free_textures(state, &overlay_out.textures_delta);
 }
 
 unsafe fn triangle(
@@ -223,10 +224,8 @@ unsafe fn set_render_target_wh_recip(
     command: *mut scr::DrawCommand,
     render_target: &RenderTarget,
 ) {
-    let width_recip = 1.0f32 / (*render_target.bw).width as f32;
-    let height_recip = 1.0f32 / (*render_target.bw).height as f32;
-    (*command).shader_constants[0xe] = width_recip;
-    (*command).shader_constants[0xf] = height_recip;
+    (*command).shader_constants[0xe] = render_target.w_recip;
+    (*command).shader_constants[0xf] = render_target.h_recip;
 }
 
 unsafe fn new_draw_command(
@@ -432,4 +431,55 @@ unsafe fn update_texture(
         filtering,
         wrap_mode,
     );
+}
+
+unsafe fn update_textures(
+    renderer: *mut scr::Renderer,
+    state: &mut RenderState,
+    delta: &TexturesDelta,
+) {
+    for &(id, ref delta) in &delta.set {
+        // Not really sure which is best way to handle this since BW will only
+        // accept one filtering mode instead of min/mag split.
+        let bilinear = delta.options.magnification == TextureFilter::Linear ||
+            delta.options.minification == TextureFilter::Linear;
+        let size = delta.image.size();
+        let size = (size[0] as u32, size[1] as u32);
+        let rgba = egui_image_data_to_rgba(&delta.image, &mut state.temp_buffer);
+        if let Some(pos) = delta.pos {
+            if let Some(texture) = state.textures.get(&id) {
+                texture.update(rgba, (pos[0] as u32, pos[1] as u32), size);
+            } else {
+                warn_once!("Tried to update nonexistent texture {id:?}");
+            }
+        } else {
+            if let Some(texture) = OwnedBwTexture::new_rgba(renderer, size, rgba, bilinear) {
+                state.textures.insert(id, texture);
+            } else {
+                error!("Could not create texture of size {size:?}");
+            }
+        }
+    }
+}
+
+fn egui_image_data_to_rgba<'a>(image: &'a epaint::ImageData, buffer: &'a mut Vec<u8>) -> &'a [u8] {
+    match image {
+        epaint::ImageData::Color(image) => {
+            bytemuck::cast_slice(&image.pixels)
+        }
+        epaint::ImageData::Font(image) => {
+            buffer.clear();
+            buffer.reserve(image.pixels.len() * 4);
+            for pixel in image.srgba_pixels(None) {
+                buffer.extend_from_slice(bytemuck::bytes_of(&pixel));
+            }
+            &buffer[..]
+        }
+    }
+}
+
+fn free_textures(state: &mut RenderState, delta: &TexturesDelta) {
+    for &id in &delta.free {
+        state.textures.remove(&id);
+    }
 }

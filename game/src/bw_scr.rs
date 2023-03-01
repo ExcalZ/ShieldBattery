@@ -32,6 +32,7 @@ mod bw_hash_table;
 mod bw_vector;
 mod dialog_hook;
 mod draw_inject;
+mod draw_overlay;
 mod file_hook;
 mod game;
 mod pe_image;
@@ -191,7 +192,13 @@ pub struct BwScr {
     // Path that reads/writes of CSettings.json will be redirected to
     settings_file_path: RwLock<String>,
     detection_status_copy: Mutex<Vec<u32>>,
-    overlay_state: Mutex<draw_inject::OverlayState>,
+    render_state: Mutex<RenderState>,
+}
+
+/// State mutated during renderer draw call
+struct RenderState {
+    overlay: draw_overlay::OverlayState,
+    render: draw_inject::RenderState,
 }
 
 struct SendPtr<T>(T);
@@ -1432,7 +1439,10 @@ impl BwScr {
             dropped_players: AtomicU32::new(0),
             settings_file_path: RwLock::new(String::new()),
             detection_status_copy: Mutex::new(Vec::new()),
-            overlay_state: Mutex::new(draw_inject::OverlayState::new()),
+            render_state: Mutex::new(RenderState {
+                render: draw_inject::RenderState::new(),
+                overlay: draw_overlay::OverlayState::new(),
+            }),
         })
     }
 
@@ -1959,12 +1969,21 @@ impl BwScr {
                     }
                 }
                 let vertex_buffer = self.vertex_buffer.resolve();
-                if let Some(mut overlay_state) = self.overlay_state.try_lock() {
+                if let Some(mut render_state) = self.render_state.try_lock() {
+                    // Render target 1 is for UI layers (0xb to 0x1d inclusive)
+                    let render_target = draw_inject::RenderTarget::new(
+                        (self.get_render_target)(1),
+                        1,
+                    );
+                    let size = ((*render_target.bw).width, (*render_target.bw).height);
+                    let overlay_out = render_state.overlay.step(size);
                     draw_inject::add_overlays(
-                        &mut overlay_state,
+                        &mut render_state.render,
                         renderer,
                         commands,
                         vertex_buffer,
+                        &overlay_out,
+                        &render_target,
                         self,
                     );
                 }
