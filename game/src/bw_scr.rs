@@ -793,7 +793,7 @@ pub mod scr {
         assert_eq!(size_of::<DrawCommand>(), 0xa0);
         assert_eq!(size_of::<Shader>(), 0x78);
         assert_eq!(size_of::<Sprite>(), 0x28);
-        assert_eq!(size_of::<V_Renderer>(), 0x40);
+        assert_eq!(size_of::<V_Renderer>(), 0x44);
         assert_eq!(size_of::<VertexBuffer>(), 0x4c);
         assert_eq!(size_of::<RenderTarget>(), 0x20);
         assert_eq!(size_of::<DrawSort>(), 0x8);
