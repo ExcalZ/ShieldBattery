@@ -36,14 +36,15 @@ export class LeagueAdminApi {
   @httpBefore(handleMultipartFiles(MAX_IMAGE_SIZE))
   async addLeague(ctx: RouterContext): Promise<AdminAddLeagueResponse> {
     const { body } = validateRequest(ctx, {
-      body: Joi.object<ServerAdminAddLeagueRequest>({
+      body: Joi.object<ServerAdminAddLeagueRequest & { image: any }>({
         name: Joi.string().required(),
         description: Joi.string().required(),
-        signupsAfter: Joi.date().timestamp().required(),
-        startAt: Joi.date().timestamp().required(),
-        endAt: Joi.date().timestamp().required(),
+        signupsAfter: Joi.date().timestamp().min(Date.now()).required(),
+        startAt: Joi.date().timestamp().min(Date.now()).required(),
+        endAt: Joi.date().timestamp().min(Date.now()).required(),
         rulesAndInfo: Joi.string(),
         link: Joi.string(),
+        image: Joi.any(),
       }),
     })
 
@@ -53,7 +54,7 @@ export class LeagueAdminApi {
       throw new httpErrors.BadRequest('startAt must be before endAt')
     }
 
-    const file = ctx.request.files?.file
+    const file = ctx.request.files?.image
     let image: sharp.Sharp | undefined
     let imageExtension: string | undefined
     if (file && Array.isArray(file)) {

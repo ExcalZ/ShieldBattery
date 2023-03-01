@@ -1,4 +1,4 @@
-import fs from 'fs'
+import { unlink } from 'fs/promises'
 import Koa from 'koa'
 import koaBody from 'koa-body'
 import logger from '../logging/logger'
@@ -24,10 +24,14 @@ export function handleMultipartFiles(maxFileSize = 50 * 1024 * 1024) {
         await next()
       } finally {
         if (ctx.request.files) {
-          for (const { filepath } of Array.from(Object.values(ctx.request.files)).flat()) {
-            fs.unlink(filepath, err => {
-              logger.error({ err }, 'Failed to delete uploaded file')
-            })
+          try {
+            await Promise.all(
+              Array.from(Object.values(ctx.request.files))
+                .flat()
+                .map(({ filepath }) => unlink(filepath)),
+            )
+          } catch (err) {
+            logger.error({ err }, 'Failed to delete uploaded file')
           }
         }
       }
