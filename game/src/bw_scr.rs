@@ -191,6 +191,7 @@ pub struct BwScr {
     // Path that reads/writes of CSettings.json will be redirected to
     settings_file_path: RwLock<String>,
     detection_status_copy: Mutex<Vec<u32>>,
+    overlay_state: Mutex<draw_inject::OverlayState>,
 }
 
 struct SendPtr<T>(T);
@@ -699,7 +700,7 @@ pub mod scr {
             ) -> *mut RendererTexture,
         >,
         pub unkd: usize,
-        /// texture, x, y, width, height, data, row_length, format, filtering, wrap_mode
+        /// texture, x, y, width, height, data, row_length (pixels), format, filtering, wrap_mode
         pub update_texture: Thiscall<
             unsafe extern "C" fn(
                 *mut Renderer,
@@ -715,7 +716,7 @@ pub mod scr {
                 u32,
             )
         >,
-        pub delete_texture: usize,
+        pub delete_texture: Thiscall<unsafe extern "C" fn(*mut Renderer, *mut RendererTexture)>,
         pub create_shader: Thiscall<
             unsafe extern "C" fn(
                 *mut Renderer,
@@ -1431,6 +1432,7 @@ impl BwScr {
             dropped_players: AtomicU32::new(0),
             settings_file_path: RwLock::new(String::new()),
             detection_status_copy: Mutex::new(Vec::new()),
+            overlay_state: Mutex::new(draw_inject::OverlayState::new()),
         })
     }
 
@@ -1957,7 +1959,15 @@ impl BwScr {
                     }
                 }
                 let vertex_buffer = self.vertex_buffer.resolve();
-                draw_inject::add_overlays(commands, vertex_buffer, self);
+                if let Some(mut overlay_state) = self.overlay_state.try_lock() {
+                    draw_inject::add_overlays(
+                        &mut overlay_state,
+                        renderer,
+                        commands,
+                        vertex_buffer,
+                        self,
+                    );
+                }
                 orig(renderer, commands, width, height)
             },
             relative,

@@ -1,10 +1,33 @@
-use std::ptr::{addr_of_mut, null_mut};
+use std::ptr::{self, addr_of_mut, null_mut};
 
+use bytemuck::{Pod, Zeroable};
+use hashbrown::HashMap;
 use quick_error::{quick_error};
 
 use super::bw_vector::{bw_vector_push};
+use crate::bw::Bw;
+
 use super::scr;
 use super::{BwScr};
+
+/// State persisted across draws
+pub struct OverlayState {
+    textures: HashMap<u64, OwnedBwTexture>,
+}
+
+/// Most of this isn't probably safe to use outside renderer (main) thread,
+/// but will have to implement this anyway to have it be storable
+/// in global BwScr.
+unsafe impl Send for OverlayState {}
+unsafe impl Sync for OverlayState {}
+
+impl OverlayState {
+    pub fn new() -> OverlayState {
+        OverlayState {
+            textures: HashMap::with_capacity(16),
+        }
+    }
+}
 
 const EMPTY_SUB_COMMANDS: scr::DrawSubCommands = scr::DrawSubCommands {
     unk: 0,
@@ -25,6 +48,14 @@ struct RenderTarget {
     id: u32,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct ColoredVertex {
+    pos: [f32; 2],
+    texture: [f32; 2],
+    color: u32,
+}
+
 struct VertexBufferAlloc<T> {
     data: *mut T,
     byte_offset: usize,
@@ -38,28 +69,103 @@ impl<T: Copy> VertexBufferAlloc<T> {
             *self.data.add(index) = value;
         }
     }
+
+    fn set_all(&self, value: &[T]) {
+        assert!(value.len() <= self.length);
+        unsafe {
+            ptr::copy_nonoverlapping(value.as_ptr(), self.data, value.len());
+        }
+    }
 }
 
 pub unsafe fn add_overlays(
+    state: &mut OverlayState,
+    renderer: *mut scr::Renderer,
     commands: *mut scr::DrawCommands,
     vertex_buf: *mut scr::VertexBuffer,
     bw: &BwScr,
 ) {
-    // Render target 1 should be for UI..
+    // Render target 1 is for UI layers (0xb to 0x1d inclusive)
     let render_target = RenderTarget {
         bw: (bw.get_render_target)(1),
         id: 1,
     };
+    let texture = state.textures.entry(0)
+        .or_insert_with(|| {
+            let mut data = Vec::new();
+            for i in 0..256 {
+                for j in 0..256 {
+                    data.push(i as u8);
+                    data.push(j as u8);
+                    data.push(0);
+                    data.push(255);
+                }
+            }
+            OwnedBwTexture::new_rgba(renderer, (256, 256), &data, false)
+                .expect("Failed to create texture")
+        });
+    let frame = (*bw.game()).frame_count;
+    let mut update_bytes = Vec::new();
+    for i in 0..64 {
+        for j in 0..64 {
+            let red = (frame as u8).wrapping_add((i as u8) << 2);
+            let green = ((j as u8) << 2).wrapping_sub(frame as u8);
+            update_bytes.push(red);
+            update_bytes.push(green);
+            update_bytes.push(0);
+            update_bytes.push(255);
+        }
+    }
+    texture.update(&update_bytes, (96, 96), (64, 64));
     for i in 0x0..=0xe {
         let layer = 0x10 + i;
         let x_base = 0.1 + 0.2 * (i & 3) as f32;
         let y_base = 0.1 + 0.2 * (i >> 2) as f32;
-        let coords = [
-            (x_base + 0.1, y_base + 0.05),
-            (x_base + 0.02, y_base + 0.18),
-            (x_base + 0.18, y_base + 0.18),
+        let right = x_base + 0.15;
+        let top = y_base + 0.15;
+        let color = 0xff_ff_ff_ff;
+        let vertices = [
+            ColoredVertex {
+                pos: [x_base, top],
+                texture: [0.0, 0.0],
+                color,
+            },
+            ColoredVertex {
+                pos: [x_base, y_base],
+                texture: [0.0, 1.0],
+                color,
+            },
+            ColoredVertex {
+                pos: [right, top],
+                texture: [1.0, 0.0],
+                color,
+            },
         ];
-        if let Err(e) = triangle(layer, &coords, commands, vertex_buf, &render_target) {
+        if let Err(e) =
+            triangle(layer, texture.bw(), &vertices, commands, vertex_buf, &render_target)
+        {
+            error!("Failed to draw triangle: {e}");
+        }
+        let vertices = [
+            ColoredVertex {
+                pos: [right, y_base],
+                texture: [1.0, 1.0],
+                color,
+            },
+            ColoredVertex {
+                pos: [x_base, y_base],
+                texture: [0.0, 1.0],
+                color,
+            },
+            ColoredVertex {
+                pos: [right, top],
+                texture: [1.0, 0.0],
+                color,
+            },
+        ];
+        if let Err(e) =
+            triangle(layer, texture.bw(), &vertices, commands, vertex_buf, &render_target)
+        {
             error!("Failed to draw triangle: {e}");
         }
     }
@@ -67,7 +173,8 @@ pub unsafe fn add_overlays(
 
 unsafe fn triangle(
     layer: u16,
-    coords: &[(f32, f32); 3],
+    texture: *mut scr::RendererTexture,
+    in_vertices: &[ColoredVertex; 3],
     commands: *mut scr::DrawCommands,
     vertex_buf: *mut scr::VertexBuffer,
     render_target: &RenderTarget,
@@ -77,12 +184,9 @@ unsafe fn triangle(
     // is hardcoded to require 6 indices.
     // Going to just use 3 vertices and 3 indices and leave the remaining indices all
     // point to same vertex so that nothing should get drawn there.
-    let vertices = allocate_vertices(vertex_buf, 0x2, 0x4);
+    let vertices = allocate_vertices(vertex_buf, 0x8, 0x4);
     let indices = allocate_indices(vertex_buf, 0x6);
-    for (i, xy) in coords.iter().enumerate() {
-        vertices.set(i * 2 + 0, xy.0);
-        vertices.set(i * 2 + 1, xy.1);
-    }
+    vertices.set_all(bytemuck::cast_slice(in_vertices));
     for (i, &index) in [0u16, 1, 2, 0, 0, 0].iter().enumerate() {
         indices.set(i, index);
     }
@@ -93,8 +197,8 @@ unsafe fn triangle(
         texture_ids: [0; 7],
         // Indexed quad
         draw_mode: 1,
-        // flat_color_frag
-        shader_id: 2,
+        // colored_frag
+        shader_id: 4,
         vertex_buffer_offset_bytes: vertices.byte_offset,
         index_buffer_offset_bytes: indices.byte_offset,
         allocated_vertex_count: 4,
@@ -105,11 +209,12 @@ unsafe fn triangle(
         subcommands_post: EMPTY_SUB_COMMANDS,
         shader_constants: [0.0f32; 0x14],
     };
-    // Set solidColor
-    (*draw_command).shader_constants[0x4] = 1.0;
-    (*draw_command).shader_constants[0x5] = 0.5;
-    (*draw_command).shader_constants[0x6] = 0.5;
-    (*draw_command).shader_constants[0x7] = 1.0;
+    (*draw_command).texture_ids[0] = texture as usize;
+    // Set multiplyColor
+    (*draw_command).shader_constants[0x0] = 1.0;
+    (*draw_command).shader_constants[0x1] = 1.0;
+    (*draw_command).shader_constants[0x2] = 1.0;
+    (*draw_command).shader_constants[0x3] = 1.0;
     set_render_target_wh_recip(draw_command, render_target);
     Ok(())
 }
@@ -205,4 +310,110 @@ unsafe fn index_buf_capacity_bytes(vertex_buf: *mut scr::VertexBuffer) -> usize 
 #[cold]
 unsafe fn index_buf_grow(vertex_buf: *mut scr::VertexBuffer) {
     todo!()
+}
+
+/// Releases texture on drop,
+struct OwnedBwTexture {
+    texture: *mut scr::RendererTexture,
+    renderer: *mut scr::Renderer,
+    filtering: u8,
+    format: u8,
+    wrap_mode: u8,
+}
+
+impl OwnedBwTexture {
+    pub unsafe fn new_rgba(
+        renderer: *mut scr::Renderer,
+        size: (u32, u32),
+        data: &[u8],
+        bilinear: bool,
+    ) -> Option<OwnedBwTexture> {
+        // Format 0 = RGBA, 1 = BGRA, 2 = DXT1, 3 = DXT5, 4 = R (Single channel), 5 = RGBA16f
+        let format = 0;
+        let filtering = if bilinear { 1 } else { 0 };
+        // Wrap 0 = clamp, 1 = repeat, 2 = mirrored repeat
+        let wrap_mode = 0;
+        if data.len() != 4 * (size.0 * size.1) as usize {
+            return None;
+        }
+        let texture = (*(*renderer).vtable).create_texture.call8(
+            renderer,
+            format,
+            data.as_ptr(),
+            data.len(),
+            size.0,
+            size.1,
+            filtering,
+            wrap_mode,
+        );
+        if texture.is_null() {
+            None
+        } else {
+            Some(OwnedBwTexture {
+                texture,
+                renderer,
+                filtering: filtering as u8,
+                format: format as u8,
+                wrap_mode: wrap_mode as u8,
+            })
+        }
+    }
+
+    fn bw(&self) -> *mut scr::RendererTexture {
+        self.texture
+    }
+
+    fn update(&self, data: &[u8], pos: (u32, u32), size: (u32, u32)) {
+        unsafe {
+            if data.len() != 4 * (size.0 * size.1) as usize {
+                warn!("Invalid data passed to OwnedBwTexture::update");
+                return;
+            }
+            update_texture(
+                self.renderer,
+                self.texture,
+                data,
+                size.0,
+                pos,
+                size,
+                self.format as u32,
+                self.filtering as u32,
+                self.wrap_mode as u32,
+            );
+        }
+    }
+}
+
+impl Drop for OwnedBwTexture {
+    fn drop(&mut self) {
+        unsafe {
+            (*(*self.renderer).vtable).delete_texture.call2(self.renderer, self.texture);
+        }
+    }
+}
+
+unsafe fn update_texture(
+    renderer: *mut scr::Renderer,
+    texture: *mut scr::RendererTexture,
+    data: &[u8],
+    row_length: u32,
+    pos: (u32, u32),
+    size: (u32, u32),
+    format: u32,
+    filtering: u32,
+    wrap_mode: u32,
+) {
+    (*(*renderer).vtable).update_texture.call11(
+        renderer,
+        texture,
+        pos.0,
+        pos.1,
+        size.0,
+        size.1,
+        data.as_ptr(),
+        row_length,
+        format,
+        filtering,
+        wrap_mode,
+    );
 }
