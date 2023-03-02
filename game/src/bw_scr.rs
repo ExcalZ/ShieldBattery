@@ -92,8 +92,6 @@ pub struct BwScr {
     /// Value is larger on 16:9, as well as when zooming out.
     game_screen_width_bwpx: Value<u32>,
     units: Value<*mut scr::BwVector>,
-    renderer: Value<*mut scr::Renderer>,
-    draw_commands: Value<*mut scr::DrawCommands>,
     vertex_buffer: Value<*mut scr::VertexBuffer>,
     replay_bfix: Option<Value<*mut scr::ReplayBfix>>,
     replay_gcfg: Option<Value<*mut scr::ReplayGcfg>>,
@@ -1266,8 +1264,6 @@ impl BwScr {
         let step_game_logic = analysis.step_game_logic().ok_or("step_game_logic")?;
         let anti_troll = analysis.anti_troll();
         let units = analysis.units().ok_or("units")?;
-        let renderer = analysis.renderer().ok_or("renderer")?;
-        let draw_commands = analysis.draw_commands().ok_or("draw_commands")?;
         let vertex_buffer = analysis.vertex_buffer().ok_or("vertex_buffer")?;
         let map_width_pixels = analysis.map_width_pixels().ok_or("map_width_pixels")?;
         let screen_x = analysis.screen_x().ok_or("screen_x")?;
@@ -1356,8 +1352,6 @@ impl BwScr {
             allocated_order_count: Value::new(ctx, allocated_order_count),
             order_limit: Value::new(ctx, order_limit),
             units: Value::new(ctx, units),
-            renderer: Value::new(ctx, renderer),
-            draw_commands: Value::new(ctx, draw_commands),
             vertex_buffer: Value::new(ctx, vertex_buffer),
             map_width_pixels: Value::new(ctx, map_width_pixels),
             screen_x: Value::new(ctx, screen_x),
@@ -1979,12 +1973,13 @@ impl BwScr {
                     let overlay_out = render_state.overlay.step(size);
                     draw_inject::add_overlays(
                         &mut render_state.render,
-                        renderer,
-                        commands,
-                        vertex_buffer,
-                        &overlay_out,
+                        &draw_inject::BwVars {
+                            renderer,
+                            commands,
+                            vertex_buf: vertex_buffer,
+                        },
+                        overlay_out,
                         &render_target,
-                        self,
                     );
                 }
                 orig(renderer, commands, width, height)

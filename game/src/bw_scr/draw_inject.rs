@@ -10,7 +10,6 @@ use quick_error::{quick_error};
 use super::bw_vector::{bw_vector_push, bw_vector_reserve};
 use super::draw_overlay;
 use super::scr;
-use super::{BwScr};
 
 macro_rules! warn_once {
     ($($tokens:tt)*) => {{
@@ -52,6 +51,9 @@ quick_error! {
         OutOfDrawCommands {
             display("Ran out of draw commands")
         }
+        InvalidTexture(id: TextureId) {
+            display("Invalid texture ID {:?}", id)
+        }
     }
 }
 
@@ -87,18 +89,29 @@ struct VertexBufferAlloc<T> {
     length: usize,
 }
 
-impl<T: Copy> VertexBufferAlloc<T> {
-    fn set(&self, index: usize, value: T) {
-        assert!(index < self.length);
+impl<T: Copy + bytemuck::NoUninit + bytemuck::AnyBitPattern> VertexBufferAlloc<T> {
+    fn set_map<F, const N: usize>(&self, amount: usize, mut func: F)
+    where F: FnMut(usize) -> [T; N]
+    {
+        assert!(amount * N <= self.length);
         unsafe {
-            *self.data.add(index) = value;
+            let mut pos = self.data;
+            for i in 0..amount {
+                let data = func(i);
+                ptr::copy_nonoverlapping(data.as_ptr(), pos, N);
+                pos = pos.add(N);
+            }
         }
     }
 
-    fn set_all(&self, value: &[T]) {
-        assert!(value.len() <= self.length);
+    fn zero_after(&self, pos: usize) {
         unsafe {
-            ptr::copy_nonoverlapping(value.as_ptr(), self.data, value.len());
+            if pos < self.length {
+                let zero_amount = self.length - pos;
+                let slice = std::slice::from_raw_parts_mut(self.data.add(pos), zero_amount);
+                let slice: &mut [u8] = bytemuck::cast_slice_mut(slice);
+                slice.fill(0u8);
+            }
         }
     }
 }
@@ -116,49 +129,29 @@ fn egui_vertex_to_colored_vertex(
     }
 }
 
+/// Bw globals used by add_overlays
+pub struct BwVars {
+    pub renderer: *mut scr::Renderer,
+    pub commands: *mut scr::DrawCommands,
+    pub vertex_buf: *mut scr::VertexBuffer,
+}
+
 pub unsafe fn add_overlays(
     state: &mut RenderState,
-    renderer: *mut scr::Renderer,
-    commands: *mut scr::DrawCommands,
-    vertex_buf: *mut scr::VertexBuffer,
-    overlay_out: &draw_overlay::StepOutput,
+    bw: &BwVars,
+    overlay_out: draw_overlay::StepOutput,
     render_target: &RenderTarget,
-    bw: &BwScr,
 ) {
-    update_textures(renderer, state, &overlay_out.textures_delta);
+    update_textures(bw.renderer, state, &overlay_out.textures_delta);
     let layer = 0x17;
-    let mut triangles_drawn = 0u32;
-    for primitive in &overlay_out.primitives {
+    for primitive in overlay_out.primitives.into_iter() {
         // Primitive also has clip rect, how to translate it to BW DrawCommand?
         match primitive.primitive {
-            epaint::Primitive::Mesh(ref mesh) => {
-                // Doing one DrawCommand per triangle for now..
-                // Inefficient and worth trying to change sooner than later,
-                // but not trying figure out what BW expects from it right now.
-                if let Some(texture) = state.textures.get(&mesh.texture_id) {
-                    for indices in mesh.indices.chunks_exact(3) {
-                        let vertex1 = &mesh.vertices[indices[0] as usize];
-                        let vertex2 = &mesh.vertices[indices[1] as usize];
-                        let vertex3 = &mesh.vertices[indices[2] as usize];
-                        let vertices = [
-                            egui_vertex_to_colored_vertex(render_target, vertex1),
-                            egui_vertex_to_colored_vertex(render_target, vertex2),
-                            egui_vertex_to_colored_vertex(render_target, vertex3),
-                        ];
-                        if let Err(e) = triangle(
-                            layer,
-                            texture.bw(),
-                            &vertices,
-                            commands,
-                            vertex_buf,
-                            render_target,
-                        ) {
-                            warn_once!("Failed to draw triangle: {e}");
-                        }
-                        triangles_drawn += 1;
-                    }
-                } else {
-                    warn_once!("Texture {:?} not found", mesh.texture_id);
+            epaint::Primitive::Mesh(mesh) => {
+                if let Err(e) =
+                    draw_egui_mesh(layer, state, mesh, bw, render_target)
+                {
+                    warn_once!("Failed to draw mesh: {e}");
                 }
             }
             epaint::Primitive::Callback(..) => {
@@ -168,30 +161,98 @@ pub unsafe fn add_overlays(
             }
         }
     }
-    debug!("Added {triangles_drawn} egui triangles, render target size {}x{}", (*render_target.bw).width, (*render_target.bw).height);
     free_textures(state, &overlay_out.textures_delta);
 }
 
-unsafe fn triangle(
+trait IndexSize: Copy {
+    fn to_u16(self) -> u16;
+}
+
+impl IndexSize for u32 {
+    fn to_u16(self) -> u16 {
+        self as u16
+    }
+}
+
+impl IndexSize for u16 {
+    fn to_u16(self) -> u16 {
+        self
+    }
+}
+
+fn align4(val: u32) -> u32 {
+    (val.wrapping_sub(1) | 3).wrapping_add(1)
+}
+
+fn align6(val: u32) -> u32 {
+    let rem = val % 6;
+    if rem == 0 {
+        val
+    } else {
+        val + (6 - rem)
+    }
+}
+
+unsafe fn draw_egui_mesh(
     layer: u16,
-    texture: *mut scr::RendererTexture,
-    in_vertices: &[ColoredVertex; 3],
-    commands: *mut scr::DrawCommands,
-    vertex_buf: *mut scr::VertexBuffer,
+    state: &mut RenderState,
+    mesh: epaint::Mesh,
+    bw: &BwVars,
     render_target: &RenderTarget,
 ) -> Result<(), DrawError> {
-    // BW requires (or seems to require) to have quad in DrawCommand,
-    // but at the same time it is also working with triangles in that 4 vertices
-    // is hardcoded to require 6 indices.
-    // Going to just use 3 vertices and 3 indices and leave the remaining indices all
-    // point to same vertex so that nothing should get drawn there.
-    let vertices = allocate_vertices(vertex_buf, 0x8, 0x4);
-    let indices = allocate_indices(vertex_buf, 0x6);
-    vertices.set_all(bytemuck::cast_slice(in_vertices));
-    for (i, &index) in [0u16, 1, 2, 0, 0, 0].iter().enumerate() {
-        indices.set(i, index);
+    let texture = state.textures.get(&mesh.texture_id)
+        .ok_or_else(|| DrawError::InvalidTexture(mesh.texture_id))?;
+    if mesh.vertices.len() < 0x10000 {
+        draw_egui_mesh_main(
+            layer,
+            &mesh.indices,
+            &mesh.vertices,
+            texture,
+            bw,
+            render_target,
+        )
+    } else {
+        for mesh in mesh.split_to_u16() {
+            draw_egui_mesh_main(
+                layer,
+                &mesh.indices,
+                &mesh.vertices,
+                texture,
+                bw,
+                render_target,
+            )?;
+        }
+        Ok(())
     }
-    let draw_command = new_draw_command(commands, layer).ok_or(DrawError::OutOfDrawCommands)?;
+}
+
+unsafe fn draw_egui_mesh_main<I: IndexSize>(
+    layer: u16,
+    indices: &[I],
+    vertices: &[epaint::Vertex],
+    texture: &OwnedBwTexture,
+    bw: &BwVars,
+    render_target: &RenderTarget,
+) -> Result<(), DrawError> {
+    // Bw requires there to be some `quad_count`, and
+    // vertex count being `4 * quad_count` and
+    // index count being `6 * quad_count`.
+    let init_vertex_count = align4(vertices.len() as u32);
+    let init_index_count = align6(indices.len() as u32);
+    let quad_count = (init_vertex_count / 4).max(init_index_count / 6);
+    let vertex_count = quad_count * 4;
+    let index_count = quad_count * 6;
+    let vertex_alloc = allocate_vertices(bw.vertex_buf, 0x8, vertex_count);
+    let index_alloc = allocate_indices(bw.vertex_buf, index_count);
+    vertex_alloc.set_map(vertices.len(), |i| {
+        bytemuck::cast::<ColoredVertex, [f32; 5]>(
+            egui_vertex_to_colored_vertex(render_target, &vertices[i])
+        )
+    });
+    index_alloc.set_map(indices.len(), |i| [indices[i].to_u16()]);
+    index_alloc.zero_after(indices.len());
+
+    let draw_command = new_draw_command(bw.commands, layer).ok_or(DrawError::OutOfDrawCommands)?;
     *draw_command = scr::DrawCommand {
         render_target_id: render_target.id,
         is_hd: 0,
@@ -200,17 +261,17 @@ unsafe fn triangle(
         draw_mode: 1,
         // colored_frag
         shader_id: 4,
-        vertex_buffer_offset_bytes: vertices.byte_offset,
-        index_buffer_offset_bytes: indices.byte_offset,
-        allocated_vertex_count: 4,
-        used_vertex_count: 4,
+        vertex_buffer_offset_bytes: vertex_alloc.byte_offset,
+        index_buffer_offset_bytes: index_alloc.byte_offset,
+        allocated_vertex_count: vertex_count,
+        used_vertex_count: vertex_count,
         _unk3c: 0xffff,
         blend_mode: 0,
         subcommands_pre: EMPTY_SUB_COMMANDS,
         subcommands_post: EMPTY_SUB_COMMANDS,
         shader_constants: [0.0f32; 0x14],
     };
-    (*draw_command).texture_ids[0] = texture as usize;
+    (*draw_command).texture_ids[0] = texture.bw() as usize;
     // Set multiplyColor
     (*draw_command).shader_constants[0x0] = 1.0;
     (*draw_command).shader_constants[0x1] = 1.0;
