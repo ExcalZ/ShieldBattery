@@ -16,6 +16,7 @@ export function navigateToLeagues(transitionFn = push) {
 }
 
 export function getLeaguesList(spec: RequestHandlingSpec<GetLeaguesListResponse>): ThunkAction {
+  // TODO(tec27): Probably store this in a reducer?
   return abortableThunk(spec, async () => {
     return await fetchJson(apiUrl`leagues/`)
   })

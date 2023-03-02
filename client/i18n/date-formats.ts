@@ -16,3 +16,9 @@ export const longTimestamp = new Intl.DateTimeFormat(navigator.language, {
   hour: 'numeric',
   minute: '2-digit',
 })
+
+/** A formatter for timestamps that shows the full month and day. */
+export const monthDay = new Intl.DateTimeFormat(navigator.language, {
+  month: 'long',
+  day: 'numeric',
+})

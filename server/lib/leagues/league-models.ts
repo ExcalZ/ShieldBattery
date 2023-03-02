@@ -3,6 +3,7 @@ import { assertUnreachable } from '../../../common/assert-unreachable'
 import { League, LeagueId } from '../../../common/leagues'
 import db, { DbClient } from '../db'
 import { Dbify } from '../db/types'
+import { getUrl } from '../file-upload'
 
 type DbLeague = Dbify<League>
 
@@ -10,11 +11,12 @@ function convertLeagueFromDb(props: DbLeague): League {
   return {
     id: props.id,
     name: props.name,
+    matchmakingType: props.matchmaking_type,
     description: props.description,
     signupsAfter: props.signups_after,
     startAt: props.start_at,
     endAt: props.end_at,
-    imagePath: props.image_path,
+    imagePath: props.image_path ? getUrl(props.image_path) : undefined,
     rulesAndInfo: props.rules_and_info,
     link: props.link,
   }
@@ -23,6 +25,7 @@ function convertLeagueFromDb(props: DbLeague): League {
 export async function createLeague(
   {
     name,
+    matchmakingType,
     description,
     signupsAfter,
     startAt,
@@ -37,10 +40,10 @@ export async function createLeague(
   try {
     const result = await client.query<DbLeague>(sql`
       INSERT INTO leagues (
-        name, description, signups_after, start_at, end_at,
+        name, matchmaking_type, description, signups_after, start_at, end_at,
         image_path, rules_and_info, link
       ) VALUES (
-        ${name}, ${description}, ${signupsAfter}, ${startAt}, ${endAt},
+        ${name}, ${matchmakingType}, ${description}, ${signupsAfter}, ${startAt}, ${endAt},
         ${imagePath}, ${rulesAndInfo}, ${link}
       ) RETURNING *
     `)
@@ -74,6 +77,9 @@ export async function updateLeague(
       switch (key) {
         case 'name':
           query.append(sql`name = ${value}`)
+          break
+        case 'matchmakingType':
+          query.append(sql`matchmaking_type = ${value}`)
           break
         case 'description':
           query.append(sql`description = ${value}`)
@@ -178,7 +184,7 @@ export async function getFutureLeagues(date: Date, withClient?: DbClient): Promi
     const result = await client.query<DbLeague>(sql`
       SELECT *
       FROM leagues
-      WHERE end_at < ${date} AND start_at > ${date} AND signups_after <= ${date}
+      WHERE end_at > ${date} AND start_at > ${date} AND signups_after <= ${date}
       ORDER BY start_at DESC
     `)
     return result.rows.map(convertLeagueFromDb)

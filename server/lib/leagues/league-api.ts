@@ -12,6 +12,7 @@ import {
   ServerAdminAddLeagueRequest,
   toLeagueJson,
 } from '../../../common/leagues'
+import { ALL_MATCHMAKING_TYPES } from '../../../common/matchmaking'
 import transact from '../db/transaction'
 import { writeFile } from '../file-upload'
 import { handleMultipartFiles } from '../file-upload/handle-multipart-files'
@@ -63,6 +64,7 @@ export class LeagueAdminApi {
     const { body } = validateRequest(ctx, {
       body: Joi.object<ServerAdminAddLeagueRequest & { image: any }>({
         name: Joi.string().required(),
+        matchmakingType: Joi.valid(...ALL_MATCHMAKING_TYPES).required(),
         description: Joi.string().required(),
         signupsAfter: Joi.date().timestamp().min(Date.now()).required(),
         startAt: Joi.date().timestamp().min(Date.now()).required(),

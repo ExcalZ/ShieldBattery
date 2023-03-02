@@ -1,5 +1,6 @@
 import { Merge, Opaque } from 'type-fest'
 import { Jsonify } from '../json'
+import { MatchmakingType } from '../matchmaking'
 import { decodePrettyId, encodePrettyId } from '../pretty-id'
 
 export const LEAGUE_IMAGE_WIDTH = 704
@@ -23,7 +24,6 @@ export function makeLeagueId(id: string): LeagueId {
 }
 
 export function toClientLeagueId(id: LeagueId): ClientLeagueId {
-  console.log(`id: ${id}`)
   return encodePrettyId(id) as ClientLeagueId
 }
 
@@ -34,6 +34,7 @@ export function fromClientLeagueId(id: ClientLeagueId): LeagueId {
 export interface League {
   id: LeagueId
   name: string
+  matchmakingType: MatchmakingType
   description: string
   signupsAfter: Date
   startAt: Date
@@ -49,6 +50,7 @@ export function toLeagueJson(league: League): LeagueJson {
   return {
     id: toClientLeagueId(league.id),
     name: league.name,
+    matchmakingType: league.matchmakingType,
     description: league.description,
     signupsAfter: Number(league.signupsAfter),
     startAt: Number(league.startAt),
@@ -65,6 +67,7 @@ export interface AdminGetLeaguesResponse {
 
 export interface ServerAdminAddLeagueRequest {
   name: string
+  matchmakingType: MatchmakingType
   description: string
   signupsAfter: Date
   startAt: Date

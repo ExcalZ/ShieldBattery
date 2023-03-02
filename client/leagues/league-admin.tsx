@@ -2,12 +2,19 @@ import React, { useCallback, useEffect, useId, useState } from 'react'
 import styled from 'styled-components'
 import { Route, Switch } from 'wouter'
 import { LeagueJson, LEAGUE_IMAGE_HEIGHT, LEAGUE_IMAGE_WIDTH } from '../../common/leagues'
+import {
+  ALL_MATCHMAKING_TYPES,
+  MatchmakingType,
+  matchmakingTypeToLabel,
+} from '../../common/matchmaking'
 import FileInput from '../forms/file-input'
 import { FormHook, useForm } from '../forms/form-hook'
 import SubmitOnEnter from '../forms/submit-on-enter'
 import { required } from '../forms/validators'
 import AddIcon from '../icons/material/add-24px.svg'
 import { RaisedButton } from '../material/button'
+import { SelectOption } from '../material/select/option'
+import { Select } from '../material/select/select'
 import { TextField } from '../material/text-field'
 import { push } from '../navigation/routing'
 import { useAppDispatch } from '../redux-hooks'
@@ -149,6 +156,7 @@ function BadValidatedDateInput<ModelType>({
 
 interface CreateLeagueModel {
   name: string
+  matchmakingType: MatchmakingType
   description: string
   signupsAfter: string
   startAt: string
@@ -169,6 +177,7 @@ function CreateLeague() {
         adminAddLeague(
           {
             name: model.name,
+            matchmakingType: model.matchmakingType,
             description: model.description,
             signupsAfter: Date.parse(model.signupsAfter),
             startAt: Date.parse(model.startAt),
@@ -196,6 +205,7 @@ function CreateLeague() {
   const { onSubmit, bindInput, bindCustom } = useForm<CreateLeagueModel>(
     {
       name: '',
+      matchmakingType: MatchmakingType.Match1v1,
       description: '',
       signupsAfter: '',
       startAt: '',
@@ -257,6 +267,17 @@ function CreateLeague() {
             dense={true}
             inputProps={{ tabIndex: 0 }}
           />
+
+          <Select
+            {...bindCustom('matchmakingType')}
+            label='Matchmaking type'
+            tabIndex={0}
+            dense={true}>
+            {ALL_MATCHMAKING_TYPES.map(m => (
+              <SelectOption key={m} text={matchmakingTypeToLabel(m)} value={m} />
+            ))}
+          </Select>
+
           <TextField
             {...bindInput('description')}
             label='Description (max ~20 words)'
