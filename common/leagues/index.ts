@@ -1,10 +1,17 @@
-import { Opaque } from 'type-fest'
+import { Merge, Opaque } from 'type-fest'
 import { Jsonify } from '../json'
+import { decodePrettyId, encodePrettyId } from '../pretty-id'
 
 export const LEAGUE_IMAGE_WIDTH = 704
 export const LEAGUE_IMAGE_HEIGHT = 288
 
+/** The ID of a league as stored in the database. */
 export type LeagueId = Opaque<string, 'LeagueId'>
+/**
+ * The ID of a league as given to clients (equivalent to the DB one, just encoded in a way that
+ * looks more friendly in URLs.
+ */
+export type ClientLeagueId = Opaque<string, 'ClientLeagueId'>
 
 /**
  * Converts a league ID string to a properly typed version. Prefer better ways of getting a typed
@@ -13,6 +20,15 @@ export type LeagueId = Opaque<string, 'LeagueId'>
  */
 export function makeLeagueId(id: string): LeagueId {
   return id as LeagueId
+}
+
+export function toClientLeagueId(id: LeagueId): ClientLeagueId {
+  console.log(`id: ${id}`)
+  return encodePrettyId(id) as ClientLeagueId
+}
+
+export function fromClientLeagueId(id: ClientLeagueId): LeagueId {
+  return decodePrettyId(id) as LeagueId
 }
 
 export interface League {
@@ -27,11 +43,11 @@ export interface League {
   link?: string
 }
 
-export type LeagueJson = Jsonify<League>
+export type LeagueJson = Merge<Jsonify<League>, { id: ClientLeagueId }>
 
-export function toLeagueJson(league: League) {
+export function toLeagueJson(league: League): LeagueJson {
   return {
-    id: league.id,
+    id: toClientLeagueId(league.id),
     name: league.name,
     description: league.description,
     signupsAfter: Number(league.signupsAfter),
@@ -61,4 +77,10 @@ export type AdminAddLeagueRequest = Jsonify<ServerAdminAddLeagueRequest>
 
 export interface AdminAddLeagueResponse {
   league: LeagueJson
+}
+
+export interface GetLeaguesListResponse {
+  past: LeagueJson[]
+  current: LeagueJson[]
+  future: LeagueJson[]
 }

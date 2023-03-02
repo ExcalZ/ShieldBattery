@@ -2,6 +2,7 @@ import {
   AdminAddLeagueRequest,
   AdminAddLeagueResponse,
   AdminGetLeaguesResponse,
+  GetLeaguesListResponse,
 } from '../../common/leagues'
 import { apiUrl, urlPath } from '../../common/urls'
 import { ThunkAction } from '../dispatch-registry'
@@ -12,6 +13,12 @@ import { fetchJson } from '../network/fetch'
 /** Navigates to the leagues list. */
 export function navigateToLeagues(transitionFn = push) {
   transitionFn(urlPath`/leagues/`)
+}
+
+export function getLeaguesList(spec: RequestHandlingSpec<GetLeaguesListResponse>): ThunkAction {
+  return abortableThunk(spec, async () => {
+    return await fetchJson(apiUrl`leagues/`)
+  })
 }
 
 export function adminGetLeagues(spec: RequestHandlingSpec<AdminGetLeaguesResponse>): ThunkAction {

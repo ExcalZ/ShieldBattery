@@ -6,6 +6,7 @@ import sharp from 'sharp'
 import {
   AdminAddLeagueResponse,
   AdminGetLeaguesResponse,
+  GetLeaguesListResponse,
   LEAGUE_IMAGE_HEIGHT,
   LEAGUE_IMAGE_WIDTH,
   ServerAdminAddLeagueRequest,
@@ -19,9 +20,33 @@ import { httpBefore, httpGet, httpPost } from '../http/route-decorators'
 import { checkAllPermissions } from '../permissions/check-permissions'
 import ensureLoggedIn from '../session/ensure-logged-in'
 import { validateRequest } from '../validation/joi-validator'
-import { createLeague, getAllLeagues } from './league-models'
+import {
+  createLeague,
+  getAllLeagues,
+  getCurrentLeagues,
+  getFutureLeagues,
+  getPastLeagues,
+} from './league-models'
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024
+
+@httpApi('/leagues/')
+export class LeagueApi {
+  @httpGet('/')
+  async getLeagues(ctx: RouterContext): Promise<GetLeaguesListResponse> {
+    const now = new Date()
+    const [past, current, future] = await Promise.all([
+      getPastLeagues(now),
+      getCurrentLeagues(now),
+      getFutureLeagues(now),
+    ])
+    return {
+      past: past.map(l => toLeagueJson(l)),
+      current: current.map(l => toLeagueJson(l)),
+      future: future.map(l => toLeagueJson(l)),
+    }
+  }
+}
 
 @httpApi('/admin/leagues/')
 @httpBeforeAll(ensureLoggedIn, checkAllPermissions('manageLeagues'))
