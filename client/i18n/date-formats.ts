@@ -1,3 +1,5 @@
+import DurationFormatter from 'duration-relativetimeformat'
+
 /** A formatter for short timestamps (e.g. things that just need to show the hour + minute). */
 export const shortTimestamp = new Intl.DateTimeFormat(navigator.language, {
   hour: 'numeric',
@@ -21,4 +23,9 @@ export const longTimestamp = new Intl.DateTimeFormat(navigator.language, {
 export const monthDay = new Intl.DateTimeFormat(navigator.language, {
   month: 'long',
   day: 'numeric',
+})
+
+export const narrowDuration = new DurationFormatter(navigator.language, {
+  style: 'narrow',
+  numeric: 'always',
 })

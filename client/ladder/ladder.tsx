@@ -18,7 +18,7 @@ import { RaceChar, raceCharToLabel } from '../../common/races'
 import { SbUser, SbUserId } from '../../common/users/sb-user'
 import { Avatar } from '../avatars/avatar'
 import { useVirtuosoScrollFix } from '../dom/virtuoso-scroll-fix'
-import { longTimestamp, shortTimestamp } from '../i18n/date-formats'
+import { longTimestamp, narrowDuration, shortTimestamp } from '../i18n/date-formats'
 import { JsonLocalStorageValue } from '../local-storage'
 import { LadderPlayerIcon } from '../matchmaking/rank-icon'
 import { useButtonState } from '../material/button'
@@ -53,7 +53,6 @@ import {
   subtitle1,
   subtitle2,
 } from '../styles/typography'
-import { timeAgo } from '../time/time-ago'
 import { navigateToUserProfile } from '../users/action-creators'
 import { getRankings, navigateToLadder, searchRankings } from './action-creators'
 
@@ -759,7 +758,7 @@ const Row = React.memo(({ isEven, player, username, curTime, onSelected }: RowPr
       <WinLossCell>
         {player.wins} &ndash; {player.losses}
       </WinLossCell>
-      <LastPlayedCell>{timeAgo(curTime - player.lastPlayedDate)}</LastPlayedCell>
+      <LastPlayedCell>{narrowDuration.format(player.lastPlayedDate, curTime)}</LastPlayedCell>
       <Ripple ref={rippleRef} />
     </RowContainer>
   )

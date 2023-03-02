@@ -10,7 +10,7 @@ import {
 } from '../../common/leagues'
 import { matchmakingTypeToLabel } from '../../common/matchmaking'
 import { hasAnyPermission } from '../admin/admin-permissions'
-import { longTimestamp, monthDay } from '../i18n/date-formats'
+import { longTimestamp, monthDay, narrowDuration } from '../i18n/date-formats'
 import LeaguesIcon from '../icons/material/social_leaderboard-36px.svg'
 import logger from '../logging/logger'
 import { useButtonState } from '../material/button'
@@ -149,6 +149,7 @@ const SectionCards = styled.div`
   padding-top: 8px;
 
   display: flex;
+  align-items: flex-start;
   flex-wrap: wrap;
   gap: 8px;
 `
@@ -162,12 +163,14 @@ function LeagueSection({
   leagues: LeagueJson[]
   type: LeagueSectionType
 }) {
+  const curDate = Date.now()
+
   return (
     <SectionRoot>
       <SectionLabel>{label}</SectionLabel>
       <SectionCards>
         {leagues.map(l => (
-          <LeagueCard key={l.id} league={l} type={type} />
+          <LeagueCard key={l.id} league={l} type={type} curDate={curDate} />
         ))}
       </SectionCards>
     </SectionRoot>
@@ -242,18 +245,26 @@ const DateTooltip = styled(Tooltip)`
   display: inline-flex;
 `
 
-function LeagueCard({ league, type }: { league: LeagueJson; type: LeagueSectionType }) {
+function LeagueCard({
+  league,
+  type,
+  curDate,
+}: {
+  league: LeagueJson
+  type: LeagueSectionType
+  curDate: number
+}) {
   const [buttonProps, rippleRef] = useButtonState({ onClick: () => push(`/leagues/${league.id}`) })
 
   let dateText: string
   let dateTooltip: string
   switch (type) {
     case LeagueSectionType.Current:
-      dateText = 'Ends in FIXME'
+      dateText = `Ends ${narrowDuration.format(league.endAt, curDate)}`
       dateTooltip = longTimestamp.format(league.endAt)
       break
     case LeagueSectionType.Future:
-      dateText = `Starts in FIXME`
+      dateText = `Starts ${narrowDuration.format(league.startAt, curDate)}`
       dateTooltip = longTimestamp.format(league.startAt)
       break
     case LeagueSectionType.Past:
