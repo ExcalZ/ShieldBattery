@@ -496,4 +496,24 @@ impl<'e> Analysis<'e> {
     pub fn get_render_target(&mut self) -> Option<VirtualAddress> {
         self.0.get_render_target()
     }
+
+    pub fn init_obs_ui(&mut self) -> Option<VirtualAddress> {
+        self.0.init_obs_ui()
+    }
+
+    pub fn is_replay(&mut self) -> Option<Operand<'e>> {
+        self.0.is_replay()
+    }
+
+    pub fn get_ui_consoles(&mut self) -> Option<VirtualAddress> {
+        self.0.get_ui_consoles()
+    }
+
+    pub fn load_consoles(&mut self) -> Option<VirtualAddress> {
+        self.0.load_consoles()
+    }
+
+    pub fn init_consoles(&mut self) -> Option<VirtualAddress> {
+        self.0.init_consoles()
+    }
 }

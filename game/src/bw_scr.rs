@@ -55,6 +55,7 @@ pub struct BwScr {
     is_multiplayer: Value<u8>,
     game_state: Value<u8>,
     sprites_inited: Value<u8>,
+    is_replay: Value<u32>,
     local_player_id: Value<u32>,
     local_unique_player_id: Value<u32>,
     local_storm_id: Value<u32>,
@@ -140,6 +141,9 @@ pub struct BwScr {
     process_game_commands: unsafe extern "C" fn(*const u8, usize, u32),
     move_screen: unsafe extern "C" fn(u32, u32),
     get_render_target: unsafe extern "C" fn(u32) -> *mut scr::RenderTarget,
+    load_consoles: Thiscall<unsafe extern "C" fn(*mut scr::BwHashTable)>,
+    init_consoles: Thiscall<unsafe extern "C" fn(*mut scr::BwHashTable, u32)>,
+    get_ui_consoles: unsafe extern "C" fn() -> *mut scr::BwHashTable,
     mainmenu_entry_hook: scarf::VirtualAddress,
     load_snp_list: scarf::VirtualAddress,
     start_udp_server: scarf::VirtualAddress,
@@ -162,6 +166,7 @@ pub struct BwScr {
     step_game_logic: scarf::VirtualAddress,
     net_format_turn_rate: scarf::VirtualAddress,
     update_game_screen_size: scarf::VirtualAddress,
+    init_obs_ui: scarf::VirtualAddress,
     lobby_create_callback_offset: usize,
     starcraft_tls_index: SendPtr<*mut u32>,
 
@@ -1134,6 +1139,7 @@ impl BwScr {
             .process_lobby_commands()
             .ok_or("Process lobby commands")?;
         let send_command = analysis.send_command().ok_or("send_command")?;
+        let is_replay = analysis.is_replay().ok_or("is_replay")?;
         let local_player_id = analysis.local_player_id().ok_or("Local player id")?;
         let local_storm_id = analysis.local_storm_player_id().ok_or("Local storm id")?;
         let local_unique_player_id = analysis
@@ -1276,6 +1282,10 @@ impl BwScr {
             .update_game_screen_size()
             .ok_or("update_game_screen_size")?;
         let get_render_target = analysis.get_render_target().ok_or("get_render_target")?;
+        let load_consoles = analysis.load_consoles().ok_or("load_consoles")?;
+        let init_consoles = analysis.init_consoles().ok_or("init_consoles")?;
+        let get_ui_consoles = analysis.get_ui_consoles().ok_or("get_ui_consoles")?;
+        let init_obs_ui = analysis.init_obs_ui().ok_or("init_obs_ui")?;
 
         let uses_new_join_param_variant = match analysis.join_param_variant_type_offset() {
             Some(0) => false,
@@ -1325,6 +1335,7 @@ impl BwScr {
             is_multiplayer: Value::new(ctx, is_multiplayer),
             game_state: Value::new(ctx, game_state),
             sprites_inited: Value::new(ctx, sprites_inited),
+            is_replay: Value::new(ctx, is_replay),
             local_player_id: Value::new(ctx, local_player_id),
             local_unique_player_id: Value::new(ctx, local_unique_player_id),
             local_storm_id: Value::new(ctx, local_storm_id),
@@ -1370,6 +1381,7 @@ impl BwScr {
             original_status_screen_update,
             net_format_turn_rate,
             update_game_screen_size,
+            init_obs_ui,
             init_network_player_info: unsafe { mem::transmute(init_network_player_info.0) },
             step_network: unsafe { mem::transmute(step_network.0) },
             step_network_addr: step_network,
@@ -1392,6 +1404,9 @@ impl BwScr {
             process_game_commands: unsafe { mem::transmute(process_game_commands.0) },
             move_screen: unsafe { mem::transmute(move_screen.0) },
             get_render_target: unsafe { mem::transmute(get_render_target.0) },
+            load_consoles: Thiscall::foreign(load_consoles.0 as usize),
+            init_consoles: Thiscall::foreign(init_consoles.0 as usize),
+            get_ui_consoles: unsafe { mem::transmute(get_ui_consoles.0) },
             load_snp_list,
             start_udp_server,
             mainmenu_entry_hook,
@@ -1711,6 +1726,37 @@ impl BwScr {
                 }
                 game_thread::after_init_game_data();
                 1
+            },
+            address,
+        );
+        let address = self.init_obs_ui.0 as usize - base;
+        exe.hook_closure_address(
+            InitObsUi,
+            move |orig| {
+                // Make bw think that it doesn't need to create obs ui,
+                // and load default ingame consoles instead
+                // ('is_dummy_ui' function in obs ui vtable would have to be patched
+                // if consoles aren't loaded)
+                let is_replay = self.is_replay.resolve();
+                let local_id = self.local_unique_player_id.resolve();
+                if is_replay != 0 || local_id >= 0x80 {
+                    self.is_replay.write(0);
+                    self.local_unique_player_id.write(0);
+                    let ui_consoles = (self.get_ui_consoles)();
+                    let game = self.game();
+                    let race_char = match (*game).player_race {
+                        0 => b'z',
+                        1 => b't',
+                        2 | _ => b'p',
+                    };
+                    self.load_consoles.call1(ui_consoles);
+                    self.init_consoles.call2(ui_consoles, race_char as u32);
+                    orig();
+                    self.is_replay.write(is_replay);
+                    self.local_unique_player_id.write(local_id);
+                } else {
+                    orig();
+                }
             },
             address,
         );
@@ -3245,6 +3291,7 @@ mod hooks {
         !0 => ProcessLobbyCommands(*const u8, usize, u32);
         !0 => SendCommand(*const u8, usize);
         !0 => InitGameData() -> u32;
+        !0 => InitObsUi();
         !0 => InitUnitData();
         !0 => StepGame();
         !0 => StepReplayCommands();

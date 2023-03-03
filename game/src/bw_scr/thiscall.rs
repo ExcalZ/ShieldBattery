@@ -267,6 +267,12 @@ impl<T: ExternCFn> Thiscall<T> {
         }
     }
 
+    /// Creates thiscall wrapper to a foreign function which already uses thiscall ABI,
+    /// so that it can be called properly.
+    pub fn foreign(fnptr: usize) -> Thiscall<T> {
+        Thiscall(fnptr, PhantomData)
+    }
+
     pub fn cast_usize(self) -> usize {
         self.0
     }
