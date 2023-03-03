@@ -7,6 +7,7 @@ use bw_dat::UnitId;
 use libc::{c_void, sockaddr};
 use once_cell::sync::OnceCell;
 use quick_error::quick_error;
+use winapi::shared::windef::{HWND};
 
 use crate::app_messages::{MapInfo, Settings};
 
@@ -100,6 +101,14 @@ pub trait Bw: Sync + Send {
     unsafe fn free(&self, ptr: *mut u8);
 
     unsafe fn call_original_status_screen_fn(&self, unit_id: UnitId, dialog: *mut Dialog);
+
+    unsafe fn window_proc_hook(
+        &self,
+        window: HWND,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> Option<isize>;
 }
 
 /// One bool for state that doesn't require specific handling based on version.

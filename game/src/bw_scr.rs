@@ -11,6 +11,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use libc::c_void;
 use parking_lot::{Mutex, RwLock};
 use smallvec::SmallVec;
+use winapi::shared::windef::{HWND};
 use winapi::um::errhandlingapi::SetLastError;
 use winapi::um::libloaderapi::GetModuleHandleW;
 
@@ -24,6 +25,7 @@ use crate::bw::unit::{Unit, UnitIterator};
 use crate::bw::{self, Bw, FowSpriteIterator, SnpFunctions, StormPlayerId};
 use crate::bw::{commands, UserLatency};
 use crate::game_thread::send_game_msg_to_async;
+use crate::recurse_checked_mutex::{Mutex as RecurseCheckedMutex};
 use crate::snp;
 use crate::windows;
 use crate::{game_thread, GameThreadMessage};
@@ -195,7 +197,7 @@ pub struct BwScr {
     // Path that reads/writes of CSettings.json will be redirected to
     settings_file_path: RwLock<String>,
     detection_status_copy: Mutex<Vec<u32>>,
-    render_state: Mutex<RenderState>,
+    render_state: RecurseCheckedMutex<RenderState>,
 }
 
 /// State mutated during renderer draw call
@@ -1448,7 +1450,7 @@ impl BwScr {
             dropped_players: AtomicU32::new(0),
             settings_file_path: RwLock::new(String::new()),
             detection_status_copy: Mutex::new(Vec::new()),
-            render_state: Mutex::new(RenderState {
+            render_state: RecurseCheckedMutex::new(RenderState {
                 render: draw_inject::RenderState::new(),
                 overlay: draw_overlay::OverlayState::new(),
             }),
@@ -2009,7 +2011,7 @@ impl BwScr {
                     }
                 }
                 let vertex_buffer = self.vertex_buffer.resolve();
-                if let Some(mut render_state) = self.render_state.try_lock() {
+                if let Some(mut render_state) = self.render_state.lock() {
                     // Render target 1 is for UI layers (0xb to 0x1d inclusive)
                     let render_target = draw_inject::RenderTarget::new(
                         (self.get_render_target)(1),
@@ -2858,6 +2860,23 @@ impl bw::Bw for BwScr {
             UserLatency::High => 1,
             UserLatency::ExtraHigh => 2,
         });
+    }
+
+    unsafe fn window_proc_hook(
+        &self,
+        window: HWND,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> Option<isize> {
+        let mut render_state = match self.render_state.lock() {
+            Some(s) => s,
+            None => {
+                warn!("Recursive window proc call?, not passing message {msg:x} to overlay state");
+                return None;
+            }
+        };
+        render_state.overlay.window_proc(window, msg, wparam, lparam)
     }
 }
 
