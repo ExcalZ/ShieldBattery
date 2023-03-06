@@ -134,6 +134,7 @@ pub struct BwVars {
     pub renderer: *mut scr::Renderer,
     pub commands: *mut scr::DrawCommands,
     pub vertex_buf: *mut scr::VertexBuffer,
+    pub is_hd: bool,
 }
 
 pub unsafe fn add_overlays(
@@ -258,7 +259,7 @@ unsafe fn draw_egui_mesh_main<I: IndexSize>(
     let draw_command = new_draw_command(bw.commands, layer).ok_or(DrawError::OutOfDrawCommands)?;
     *draw_command = scr::DrawCommand {
         render_target_id: render_target.id,
-        is_hd: 0,
+        is_hd: bw.is_hd as u32,
         texture_ids: [0; 7],
         // Indexed quad
         draw_mode: 1,

@@ -96,6 +96,8 @@ pub struct BwScr {
     game_screen_width_bwpx: Value<u32>,
     units: Value<*mut scr::BwVector>,
     vertex_buffer: Value<*mut scr::VertexBuffer>,
+    renderer: Value<*mut scr::Renderer>,
+    draw_commands: Value<*mut scr::DrawCommands>,
     replay_bfix: Option<Value<*mut scr::ReplayBfix>>,
     replay_gcfg: Option<Value<*mut scr::ReplayGcfg>>,
     anti_troll: Option<Value<*mut scr::AntiTroll>>,
@@ -169,6 +171,7 @@ pub struct BwScr {
     net_format_turn_rate: scarf::VirtualAddress,
     update_game_screen_size: scarf::VirtualAddress,
     init_obs_ui: scarf::VirtualAddress,
+    draw_graphic_layers: scarf::VirtualAddress,
     lobby_create_callback_offset: usize,
     starcraft_tls_index: SendPtr<*mut u32>,
 
@@ -1273,6 +1276,8 @@ impl BwScr {
         let anti_troll = analysis.anti_troll();
         let units = analysis.units().ok_or("units")?;
         let vertex_buffer = analysis.vertex_buffer().ok_or("vertex_buffer")?;
+        let renderer = analysis.renderer().ok_or("renderer")?;
+        let draw_commands = analysis.draw_commands().ok_or("draw_commands")?;
         let map_width_pixels = analysis.map_width_pixels().ok_or("map_width_pixels")?;
         let screen_x = analysis.screen_x().ok_or("screen_x")?;
         let screen_y = analysis.screen_y().ok_or("screen_y")?;
@@ -1288,6 +1293,7 @@ impl BwScr {
         let init_consoles = analysis.init_consoles().ok_or("init_consoles")?;
         let get_ui_consoles = analysis.get_ui_consoles().ok_or("get_ui_consoles")?;
         let init_obs_ui = analysis.init_obs_ui().ok_or("init_obs_ui")?;
+        let draw_graphic_layers = analysis.draw_graphic_layers().ok_or("draw_graphic_layers")?;
 
         let uses_new_join_param_variant = match analysis.join_param_variant_type_offset() {
             Some(0) => false,
@@ -1366,6 +1372,8 @@ impl BwScr {
             order_limit: Value::new(ctx, order_limit),
             units: Value::new(ctx, units),
             vertex_buffer: Value::new(ctx, vertex_buffer),
+            renderer: Value::new(ctx, renderer),
+            draw_commands: Value::new(ctx, draw_commands),
             map_width_pixels: Value::new(ctx, map_width_pixels),
             screen_x: Value::new(ctx, screen_x),
             screen_y: Value::new(ctx, screen_y),
@@ -1384,6 +1392,7 @@ impl BwScr {
             net_format_turn_rate,
             update_game_screen_size,
             init_obs_ui,
+            draw_graphic_layers,
             init_network_player_info: unsafe { mem::transmute(init_network_player_info.0) },
             step_network: unsafe { mem::transmute(step_network.0) },
             step_network_addr: step_network,
@@ -1883,7 +1892,7 @@ impl BwScr {
             }
         }
 
-        self.patch_shaders(&mut exe, base);
+        self.rendering_patches(&mut exe, base);
 
         sdf_cache::apply_sdf_cache_hooks(self, &mut exe, base);
 
@@ -1944,12 +1953,58 @@ impl BwScr {
         });
     }
 
-    unsafe fn patch_shaders(&'static self, exe: &mut whack::ModulePatcher<'_>, base: usize) {
+    unsafe fn rendering_patches(&'static self, exe: &mut whack::ModulePatcher<'_>, base: usize) {
         use self::hooks::*;
         let renderer_vtable = self.prism_renderer_vtable.0 as *const scr::V_Renderer;
 
         let draw = (*renderer_vtable).draw;
         let create_shader = (*renderer_vtable).create_shader;
+
+        let address = self.draw_graphic_layers.0 as usize - base;
+        // draw_graphic_layers is the main BW draw command queuing function.
+        // Usually called once per render to queue DrawCommands for all sprites of the game
+        // as well as UI, but when the user is in middle of switching between
+        // SD and HD, it will be called a second time with `second_draw == 1`
+        // so that the game will be able to fade between the two graphic modes.
+        exe.hook_closure_address(
+            DrawGraphicLayers,
+            move |a, b, second_draw, orig| {
+                orig(a, b, second_draw);
+                let renderer = self.renderer.resolve();
+                let commands = self.draw_commands.resolve();
+                let vertex_buffer = self.vertex_buffer.resolve();
+                // Assuming that the last added draw command (Added during orig() call)
+                // will have the is_hd value that is currently being used.
+                // Could also probably examine the render target from get_render_target,
+                // as that changes depending on if BW is currently rendering HD or not.
+                let is_hd = (*commands).draw_command_count
+                    .checked_sub(1)
+                    .and_then(|idx| (*commands).commands.get(idx as usize))
+                    .map(|x| x.is_hd != 0)
+                    .unwrap_or(false);
+                if let Some(mut render_state) = self.render_state.lock() {
+                    // Render target 1 is for UI layers (0xb to 0x1d inclusive)
+                    let render_target = draw_inject::RenderTarget::new(
+                        (self.get_render_target)(1),
+                        1,
+                    );
+                    let size = ((*render_target.bw).width, (*render_target.bw).height);
+                    let overlay_out = render_state.overlay.step(size);
+                    draw_inject::add_overlays(
+                        &mut render_state.render,
+                        &draw_inject::BwVars {
+                            renderer,
+                            commands,
+                            vertex_buf: vertex_buffer,
+                            is_hd,
+                        },
+                        overlay_out,
+                        &render_target,
+                    );
+                }
+            },
+            address,
+        );
         // Render hook
         let relative = draw.cast_usize() - base;
         exe.hook_closure_address(
@@ -2009,26 +2064,6 @@ impl BwScr {
                         cmd.shader_constants[0] = use_new_mask;
                         cmd.shader_constants[1] = show_network_stalled;
                     }
-                }
-                let vertex_buffer = self.vertex_buffer.resolve();
-                if let Some(mut render_state) = self.render_state.lock() {
-                    // Render target 1 is for UI layers (0xb to 0x1d inclusive)
-                    let render_target = draw_inject::RenderTarget::new(
-                        (self.get_render_target)(1),
-                        1,
-                    );
-                    let size = ((*render_target.bw).width, (*render_target.bw).height);
-                    let overlay_out = render_state.overlay.step(size);
-                    draw_inject::add_overlays(
-                        &mut render_state.render,
-                        &draw_inject::BwVars {
-                            renderer,
-                            commands,
-                            vertex_buf: vertex_buffer,
-                        },
-                        overlay_out,
-                        &render_target,
-                    );
                 }
                 orig(renderer, commands, width, height)
             },
@@ -3328,6 +3363,7 @@ mod hooks {
         !0 => NetFormatTurnRate(*mut scr::NetFormatTurnRateResult, bool) ->
             *mut scr::NetFormatTurnRateResult;
         !0 => UpdateGameScreenSize(f32);
+        !0 => DrawGraphicLayers(*mut c_void, *mut c_void, u32);
     );
 
     whack_hooks!(stdcall, 0,

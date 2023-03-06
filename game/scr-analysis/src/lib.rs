@@ -516,4 +516,8 @@ impl<'e> Analysis<'e> {
     pub fn init_consoles(&mut self) -> Option<VirtualAddress> {
         self.0.init_consoles()
     }
+
+    pub fn draw_graphic_layers(&mut self) -> Option<VirtualAddress> {
+        self.0.draw_graphic_layers()
+    }
 }
