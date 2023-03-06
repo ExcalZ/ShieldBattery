@@ -2,7 +2,7 @@ use std::mem;
 use std::time::Instant;
 
 use egui::{Align2, Event, Key, PointerButton, Pos2, Rect, Vec2};
-use winapi::shared::windef::{HWND};
+use winapi::shared::windef::{HWND, POINT};
 
 pub struct OverlayState {
     ctx: egui::Context,
@@ -84,21 +84,28 @@ impl OverlayState {
             let res = egui::Window::new("Debug")
                 .anchor(Align2::LEFT_TOP, Vec2::ZERO)
                 .show(ctx, |ui| {
-                    ctx.settings_ui(ui);
-                    let msg = format!("Windows mouse {}, {}, egui {}, {}",
+                    egui::ScrollArea::vertical()
+                        .max_height(screen_size.1 as f32 * 0.8)
+                        .show(ui, |ui| {
+                            ctx.settings_ui(ui);
+                        });
+                    // Add space since the one line of settings ui text can overflow out
+                    // of the scroll area.
+                    ui.add_space(20.0);
+                    let msg = format!("Windows mouse {}, {},\n    egui {}, {}",
                         self.mouse_debug.0,
                         self.mouse_debug.1,
                         self.mouse_debug.2.x,
                         self.mouse_debug.2.y,
                     );
-                    ui.label(egui::RichText::new(msg).size(22.0));
+                    ui.label(egui::RichText::new(msg).size(18.0));
                     let msg = format!("Windows size {}, {}, egui size {}, {}",
                         self.window_size.0,
                         self.window_size.1,
                         self.screen_size.0,
                         self.screen_size.1,
                     );
-                    ui.label(egui::RichText::new(msg).size(22.0));
+                    ui.label(egui::RichText::new(msg).size(18.0));
                     let modifiers = current_egui_modifiers();
                     let msg = format!("Ctrl {}, Alt {}, shift {}",
                         modifiers.ctrl,
@@ -124,7 +131,7 @@ impl OverlayState {
     /// If this returns Some(), the message won't be passed to BW
     pub unsafe fn window_proc(
         &mut self,
-        _window: HWND,
+        window: HWND,
         msg: u32,
         wparam: usize,
         lparam: isize,
@@ -182,6 +189,24 @@ impl OverlayState {
                         command: wparam & MK_CONTROL != 0,
                     }
                 });
+                Some(0)
+            }
+            WM_MOUSEWHEEL => {
+                let x = lparam as i16;
+                let y = (lparam >> 16) as i16;
+                let mut point = POINT {
+                    x: x as i32,
+                    y: y as i32,
+                };
+                ScreenToClient(window, &mut point);
+                let pos = self.window_pos_to_egui(point.x, point.y);
+                let handle = self.ui_rects.iter().any(|x| x.contains(pos));
+                if !handle {
+                    return None;
+                }
+                // Scroll amount seems to be fine without any extra scaling
+                let amount = ((wparam >> 16) as i16) as f32;
+                self.events.push(Event::Scroll(Vec2 { x: 0.0, y: amount }));
                 Some(0)
             }
             WM_KEYDOWN | WM_KEYUP => {
