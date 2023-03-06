@@ -1,7 +1,9 @@
 use std::mem;
+use std::sync::Arc;
 use std::time::Instant;
 
 use egui::{Align2, Event, Key, PointerButton, Pos2, Rect, Vec2};
+use egui::style::{TextStyle};
 use winapi::shared::windef::{HWND, POINT};
 
 pub struct OverlayState {
@@ -26,8 +28,25 @@ pub struct StepOutput {
 
 impl OverlayState {
     pub fn new() -> OverlayState {
+        let ctx = egui::Context::default();
+        let mut style_arc = ctx.style();
+        let style = Arc::make_mut(&mut style_arc);
+        // Increase default font sizes a bit.
+        // 16.0 seems to give a size that roughly matches with the smallest text size BW uses.
+        let text_styles = [
+            (TextStyle::Small, 12.0),
+            (TextStyle::Body, 16.0),
+            (TextStyle::Button, 16.0),
+            (TextStyle::Monospace, 16.0),
+        ];
+        for &(ref text_style, size) in &text_styles {
+            if let Some(font) = style.text_styles.get_mut(text_style) {
+                font.size = size;
+            }
+        }
+        ctx.set_style(style_arc);
         OverlayState {
-            ctx: egui::Context::default(),
+            ctx,
             start_time: Instant::now(),
             ui_rects: Vec::new(),
             events: Vec::new(),
