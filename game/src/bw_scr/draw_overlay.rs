@@ -1,7 +1,7 @@
 use std::mem;
 use std::time::Instant;
 
-use egui::{Align2, Event, PointerButton, Pos2, Rect, Vec2};
+use egui::{Align2, Event, Key, PointerButton, Pos2, Rect, Vec2};
 use winapi::shared::windef::{HWND};
 
 pub struct OverlayState {
@@ -99,6 +99,13 @@ impl OverlayState {
                         self.screen_size.1,
                     );
                     ui.label(egui::RichText::new(msg).size(22.0));
+                    let modifiers = current_egui_modifiers();
+                    let msg = format!("Ctrl {}, Alt {}, shift {}",
+                        modifiers.ctrl,
+                        modifiers.alt,
+                        modifiers.shift,
+                    );
+                    ui.label(egui::RichText::new(msg).size(18.0));
                 });
             self.add_ui_rect(&res);
         });
@@ -177,6 +184,41 @@ impl OverlayState {
                 });
                 Some(0)
             }
+            WM_KEYDOWN | WM_KEYUP => {
+                if !self.ctx.wants_keyboard_input() {
+                    return None;
+                }
+                let vkey = wparam as i32;
+                if let Some(key) = vkey_to_egui_key(vkey) {
+                    let modifiers = current_egui_modifiers();
+                    let pressed = msg == WM_KEYDOWN;
+                    self.events.push(Event::Key {
+                        key,
+                        pressed,
+                        // Could get repeat count from param, but egui docs say that
+                        // it will be automatically done anyway by egui.
+                        repeat: false,
+                        modifiers,
+                    });
+                }
+                Some(0)
+            }
+            WM_CHAR => {
+                if !self.ctx.wants_keyboard_input() {
+                    return None;
+                }
+                if wparam >= 0x80 {
+                    // Too lazy to figure out how windows sends
+                    // unicode chars to SC:R window, and we shouldn't need
+                    // egui to support actual text input outside some
+                    // debug stuff
+                    return Some(0);
+                }
+                if let Some(c) = char::from_u32(wparam as u32) {
+                    self.events.push(Event::Text(c.into()));
+                }
+                Some(0)
+            }
             _ => None,
         }
     }
@@ -224,9 +266,9 @@ fn current_egui_modifiers() -> egui::Modifiers {
     use winapi::um::winuser::*;
 
     unsafe {
-        let alt_down = GetKeyState(VK_MENU) & 1 != 0;
-        let ctrl_down = GetKeyState(VK_CONTROL) & 1 != 0;
-        let shift_down = GetKeyState(VK_SHIFT) & 1 != 0;
+        let alt_down = GetKeyState(VK_MENU) as u16 & 0x8000 != 0;
+        let ctrl_down = GetKeyState(VK_CONTROL) as u16 & 0x8000 != 0;
+        let shift_down = GetKeyState(VK_SHIFT) as u16 & 0x8000 != 0;
         egui::Modifiers {
             alt: alt_down,
             ctrl: ctrl_down,
@@ -235,4 +277,86 @@ fn current_egui_modifiers() -> egui::Modifiers {
             command: ctrl_down,
         }
     }
+}
+
+fn vkey_to_egui_key(key: i32) -> Option<Key> {
+    use egui::Key::*;
+    use winapi::um::winuser::*;
+
+    Some(match key {
+        VK_DOWN => ArrowDown,
+        VK_LEFT => ArrowLeft,
+        VK_RIGHT => ArrowRight,
+        VK_UP => ArrowUp,
+        VK_ESCAPE => Escape,
+        VK_TAB => Tab,
+        VK_BACK => Backspace,
+        VK_RETURN => Enter,
+        VK_SPACE => Space,
+        VK_INSERT => Insert,
+        VK_DELETE => Delete,
+        VK_HOME => Home,
+        VK_END => End,
+        VK_PRIOR => PageUp,
+        VK_NEXT => PageDown,
+        VK_SUBTRACT => Minus,
+        VK_ADD => PlusEquals,
+        0x30 | VK_NUMPAD0 => Num0,
+        0x31 | VK_NUMPAD1 => Num1,
+        0x32 | VK_NUMPAD2 => Num2,
+        0x33 | VK_NUMPAD3 => Num3,
+        0x34 | VK_NUMPAD4 => Num4,
+        0x35 | VK_NUMPAD5 => Num5,
+        0x36 | VK_NUMPAD6 => Num6,
+        0x37 | VK_NUMPAD7 => Num7,
+        0x38 | VK_NUMPAD8 => Num8,
+        0x39 | VK_NUMPAD9 => Num9,
+        0x41 => A,
+        0x42 => B,
+        0x43 => C,
+        0x44 => D,
+        0x45 => E,
+        0x46 => F,
+        0x47 => G,
+        0x48 => H,
+        0x49 => I,
+        0x4a => J,
+        0x4b => K,
+        0x4c => L,
+        0x4d => M,
+        0x4e => N,
+        0x4f => O,
+        0x50 => P,
+        0x51 => Q,
+        0x52 => R,
+        0x53 => S,
+        0x54 => T,
+        0x55 => U,
+        0x56 => V,
+        0x57 => W,
+        0x58 => X,
+        0x59 => Y,
+        0x5a => Z,
+        VK_F1 => F1,
+        VK_F2 => F2,
+        VK_F3 => F3,
+        VK_F4 => F4,
+        VK_F5 => F5,
+        VK_F6 => F6,
+        VK_F7 => F7,
+        VK_F8 => F8,
+        VK_F9 => F9,
+        VK_F10 => F10,
+        VK_F11 => F11,
+        VK_F12 => F12,
+        VK_F13 => F13,
+        VK_F14 => F14,
+        VK_F15 => F15,
+        VK_F16 => F16,
+        VK_F17 => F17,
+        VK_F18 => F18,
+        VK_F19 => F19,
+        VK_F20 => F20,
+        _ => return None,
+    })
 }
