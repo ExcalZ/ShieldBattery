@@ -15,16 +15,22 @@ export function navigateToLeagues(transitionFn = push) {
   transitionFn(urlPath`/leagues/`)
 }
 
-export function getLeaguesList(spec: RequestHandlingSpec<GetLeaguesListResponse>): ThunkAction {
-  // TODO(tec27): Probably store this in a reducer?
-  return abortableThunk(spec, async () => {
-    return await fetchJson(apiUrl`leagues/`)
+export function getLeaguesList(spec: RequestHandlingSpec<void>): ThunkAction {
+  return abortableThunk(spec, async dispatch => {
+    const result = await fetchJson<GetLeaguesListResponse>(apiUrl`leagues/`, {
+      signal: spec.signal,
+    })
+
+    dispatch({
+      type: '@leagues/getList',
+      payload: result,
+    })
   })
 }
 
 export function adminGetLeagues(spec: RequestHandlingSpec<AdminGetLeaguesResponse>): ThunkAction {
   return abortableThunk(spec, async () => {
-    return await fetchJson(apiUrl`admin/leagues/`)
+    return await fetchJson(apiUrl`admin/leagues/`, { signal: spec.signal })
   })
 }
 
@@ -44,6 +50,7 @@ export function adminAddLeague(
 
     return await fetchJson(apiUrl`admin/leagues/`, {
       method: 'POST',
+      signal: spec.signal,
       body: formData,
     })
   })

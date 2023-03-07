@@ -1,19 +1,15 @@
-import React, { Suspense, useEffect, useState } from 'react'
+import React, { Suspense, useEffect, useMemo, useState } from 'react'
 import styled, { css } from 'styled-components'
+import { ReadonlyDeep } from 'type-fest'
 import { Link, Route, Switch } from 'wouter'
 import { assertUnreachable } from '../../common/assert-unreachable'
-import {
-  GetLeaguesListResponse,
-  LeagueJson,
-  LEAGUE_IMAGE_HEIGHT,
-  LEAGUE_IMAGE_WIDTH,
-} from '../../common/leagues'
+import { LeagueJson, LEAGUE_IMAGE_HEIGHT, LEAGUE_IMAGE_WIDTH } from '../../common/leagues'
 import { matchmakingTypeToLabel } from '../../common/matchmaking'
 import { hasAnyPermission } from '../admin/admin-permissions'
 import { longTimestamp, monthDay, narrowDuration } from '../i18n/date-formats'
 import LeaguesIcon from '../icons/material/social_leaderboard-36px.svg'
 import logger from '../logging/logger'
-import { useButtonState } from '../material/button'
+import { TextButton, useButtonState } from '../material/button'
 import Card from '../material/card'
 import { Ripple } from '../material/ripple'
 import { Tooltip } from '../material/tooltip'
@@ -23,6 +19,7 @@ import { useAppDispatch, useAppSelector } from '../redux-hooks'
 import { background600, colorError, colorTextFaint, colorTextSecondary } from '../styles/colors'
 import { body1, caption, headline4, headline6, subtitle1 } from '../styles/typography'
 import { getLeaguesList } from './action-creators'
+import { LeagueDetails } from './league-details'
 
 const LoadableLeagueAdmin = React.lazy(async () => ({
   default: (await import('./league-admin')).LeagueAdmin,
@@ -35,6 +32,7 @@ export function LeagueRoot(props: { params: any }) {
     <Suspense fallback={<LoadingDotsArea />}>
       <Switch>
         {isAdmin ? <Route path='/leagues/admin/:rest*' component={LoadableLeagueAdmin} /> : <></>}
+        <Route path='/leagues/:id/:rest*' component={LeagueDetails} />
         <Route component={LeagueList} />
       </Switch>
     </Suspense>
@@ -42,6 +40,7 @@ export function LeagueRoot(props: { params: any }) {
 }
 
 const ListRoot = styled.div`
+  max-width: 1120px;
   padding: 12px 24px;
 
   display: flex;
@@ -73,9 +72,17 @@ enum LeagueSectionType {
 function LeagueList() {
   const dispatch = useAppDispatch()
   const isAdmin = useAppSelector(s => hasAnyPermission(s.auth, 'manageLeagues'))
-  const [leagues, setLeagues] = useState<GetLeaguesListResponse>()
+  const { past, current, future, byId } = useAppSelector(s => s.leagues)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error>()
+
+  const { pastLeagues, currentLeagues, futureLeagues } = useMemo(() => {
+    const pastLeagues = past.map(id => byId.get(id)!)
+    const currentLeagues = current.map(id => byId.get(id)!)
+    const futureLeagues = future.map(id => byId.get(id)!)
+
+    return { pastLeagues, currentLeagues, futureLeagues }
+  }, [past, current, future, byId])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -87,7 +94,6 @@ function LeagueList() {
       getLeaguesList({
         signal,
         onSuccess(res) {
-          setLeagues(res)
           setIsLoading(false)
           setError(undefined)
         },
@@ -111,22 +117,22 @@ function LeagueList() {
 
       {!isLoading && error ? <ErrorText>Error loading leagues</ErrorText> : null}
 
-      {leagues?.current?.length ? (
+      {currentLeagues.length ? (
         <LeagueSection
           label='Currently running'
-          leagues={leagues.current}
+          leagues={currentLeagues}
           type={LeagueSectionType.Current}
         />
       ) : null}
-      {leagues?.future?.length ? (
+      {futureLeagues.length ? (
         <LeagueSection
           label='Accepting signups'
-          leagues={leagues.future}
+          leagues={futureLeagues}
           type={LeagueSectionType.Future}
         />
       ) : null}
-      {leagues?.past?.length ? (
-        <LeagueSection label='Finished' leagues={leagues.past} type={LeagueSectionType.Past} />
+      {pastLeagues.length ? (
+        <LeagueSection label='Finished' leagues={pastLeagues} type={LeagueSectionType.Past} />
       ) : null}
 
       {isLoading ? <LoadingDotsArea /> : null}
@@ -136,7 +142,7 @@ function LeagueList() {
 
 const SectionRoot = styled.div`
   & + & {
-    margin-top: 16px;
+    margin-top: 32px;
   }
 `
 
@@ -149,7 +155,6 @@ const SectionCards = styled.div`
   padding-top: 8px;
 
   display: flex;
-  align-items: flex-start;
   flex-wrap: wrap;
   gap: 8px;
 `
@@ -160,7 +165,7 @@ function LeagueSection({
   type,
 }: {
   label: string
-  leagues: LeagueJson[]
+  leagues: Array<ReadonlyDeep<LeagueJson>>
   type: LeagueSectionType
 }) {
   const curDate = Date.now()
@@ -181,6 +186,9 @@ const LeagueCardRoot = styled(Card)`
   position: relative;
   width: 352px;
   padding: 0;
+
+  display: flex;
+  flex-direction: column;
 
   contain: content;
   cursor: pointer;
@@ -219,7 +227,7 @@ const LeagueName = styled.div`
   padding: 0 16px;
 `
 
-const LeagueDetails = styled.div`
+const LeagueFormatAndDate = styled.div`
   ${caption};
   padding: 0 16px;
 `
@@ -239,6 +247,15 @@ const LeagueDescription = styled.div`
 
 const LeagueActions = styled.div`
   padding: 16px 0 10px 16px;
+
+  display: flex;
+  justify-content: space-between;
+`
+
+const Spacer = styled.div`
+  width: 0;
+  height: 0;
+  flex-grow: 1;
 `
 
 const DateTooltip = styled(Tooltip)`
@@ -250,11 +267,12 @@ function LeagueCard({
   type,
   curDate,
 }: {
-  league: LeagueJson
+  league: ReadonlyDeep<LeagueJson>
   type: LeagueSectionType
   curDate: number
 }) {
-  const [buttonProps, rippleRef] = useButtonState({ onClick: () => push(`/leagues/${league.id}`) })
+  const onViewInfo = () => push(`/leagues/${league.id}`)
+  const [buttonProps, rippleRef] = useButtonState({ onClick: onViewInfo })
 
   let dateText: string
   let dateTooltip: string
@@ -278,21 +296,25 @@ function LeagueCard({
   return (
     <LeagueCardRoot {...buttonProps} tabIndex={0}>
       {league.imagePath ? (
-        <LeagueImage src={league.imagePath} alt='' />
+        <LeagueImage src={league.imagePath} alt='' draggable={false} />
       ) : (
         <LeaguePlaceholderImage>
           <PlaceholderIcon />
         </LeaguePlaceholderImage>
       )}
       <LeagueName>{league.name}</LeagueName>
-      <LeagueDetails>
+      <LeagueFormatAndDate>
         {matchmakingTypeToLabel(league.matchmakingType)} ·{' '}
         <DateTooltip text={dateTooltip} position={'right'}>
           {dateText}
         </DateTooltip>
-      </LeagueDetails>
+      </LeagueFormatAndDate>
       <LeagueDescription>{league.description}</LeagueDescription>
-      <LeagueActions>FIXME</LeagueActions>
+      <Spacer />
+      <LeagueActions>
+        <div />
+        <TextButton label='View info' onClick={onViewInfo} color='accent' />
+      </LeagueActions>
       <Ripple ref={rippleRef} />
     </LeagueCardRoot>
   )

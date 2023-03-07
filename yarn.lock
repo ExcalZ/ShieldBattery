@@ -5178,9 +5178,10 @@ duplexify@^4.1.2:
     readable-stream "^3.1.1"
     stream-shift "^1.0.0"
 
-duration-relativetimeformat@tec27/duration-relativetimeformat#f217ba370839618d8f2872cb4cc8f8baf420703b:
-  version "2.0.3"
-  resolved "https://codeload.github.com/tec27/duration-relativetimeformat/tar.gz/f217ba370839618d8f2872cb4cc8f8baf420703b"
+duration-relativetimeformat@^2.0.4:
+  version "2.0.4"
+  resolved "https://registry.yarnpkg.com/duration-relativetimeformat/-/duration-relativetimeformat-2.0.4.tgz#c50fb1052d89eb0e8a16f64c9341f937608b9f04"
+  integrity sha512-EW2eKxRm0IhOmJiBDx50PV5MKVhHGGLqQ4fLbinItdYmoZcVDFRqomCbYfZFEbBXiQdvaRUU+/E2CMlvz5/u5A==
 
 durations@^3.4.2:
   version "3.4.2"
