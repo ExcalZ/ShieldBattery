@@ -1,5 +1,7 @@
 import React, { Suspense } from 'react'
+import type { Components } from 'react-markdown'
 import styled from 'styled-components'
+import { ExternalLink } from '../navigation/external-link'
 import { LoadingDotsArea } from '../progress/dots'
 import { headline5, headline6, subtitle1, subtitle2 } from '../styles/typography'
 
@@ -59,10 +61,19 @@ export interface MarkdownProps {
   className?: string
 }
 
+const COMPONENTS: Components = {
+  a: ({ href, children }) => <ExternalLink href={href!}>{children}</ExternalLink>,
+}
+
 export function Markdown({ source, className }: MarkdownProps) {
   return (
     <Suspense fallback={<LoadingDotsArea />}>
-      <StyledMarkdown className={className} children={source} skipHtml={true} />
+      <StyledMarkdown
+        className={className}
+        children={source}
+        skipHtml={true}
+        components={COMPONENTS}
+      />
     </Suspense>
   )
 }
