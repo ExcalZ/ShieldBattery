@@ -30,7 +30,7 @@ import FindMatchIcon from './icons/shieldbattery/ic_satellite_dish_black_36px.sv
 import { useKeyListener } from './keyboard/key-listener'
 import { navigateToLadder } from './ladder/action-creators'
 import { LadderRouteComponent } from './ladder/ladder'
-import { navigateToLeagues } from './leagues/action-creators'
+import { navigateToLeaguesList } from './leagues/action-creators'
 import { LeagueRoot } from './leagues/league-list'
 import LobbyView from './lobbies/view'
 import { regenMapImage, removeMap } from './maps/action-creators'
@@ -362,7 +362,7 @@ export function MainLayout() {
           key='leagues'
           icon={<LeaguesIcon />}
           label='Leagues'
-          onClick={() => navigateToLeagues()}
+          onClick={() => navigateToLeaguesList()}
           hotkey={ALT_G}
         />,
         <ActivitySpacer key='spacer' />,
@@ -386,7 +386,7 @@ export function MainLayout() {
           key='leagues'
           icon={<LeaguesIcon />}
           label='Leagues'
-          onClick={() => navigateToLeagues()}
+          onClick={() => navigateToLeaguesList()}
           hotkey={ALT_G}
         />,
         <ActivitySpacer key='spacer' />,

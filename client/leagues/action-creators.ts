@@ -1,8 +1,11 @@
+import slug from 'slug'
+import { ReadonlyDeep } from 'type-fest'
 import {
   AdminAddLeagueRequest,
   AdminAddLeagueResponse,
   AdminGetLeaguesResponse,
   GetLeaguesListResponse,
+  LeagueJson,
 } from '../../common/leagues'
 import { apiUrl, urlPath } from '../../common/urls'
 import { ThunkAction } from '../dispatch-registry'
@@ -11,8 +14,21 @@ import { abortableThunk, RequestHandlingSpec } from '../network/abortable-thunk'
 import { fetchJson } from '../network/fetch'
 
 /** Navigates to the leagues list. */
-export function navigateToLeagues(transitionFn = push) {
+export function navigateToLeaguesList(transitionFn = push) {
   transitionFn(urlPath`/leagues/`)
+}
+
+/**
+ * Navigates to a particular league. If the league data is available/provided, this URL will
+ * include a slug (otherwise there will be a redirect once the data has loaded).
+ */
+// TODO(tec27): Add a way to navigate to a particular sub-page
+export function navigateToLeague(
+  leagueId: string,
+  leagueData?: ReadonlyDeep<LeagueJson>,
+  transitionFn = push,
+) {
+  transitionFn(urlPath`/leagues/${leagueId}/${leagueData ? slug(leagueData.name) : '_'}/`)
 }
 
 export function getLeaguesList(spec: RequestHandlingSpec<void>): ThunkAction {

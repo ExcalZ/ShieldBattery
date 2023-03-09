@@ -13,12 +13,11 @@ import { TextButton, useButtonState } from '../material/button'
 import Card from '../material/card'
 import { Ripple } from '../material/ripple'
 import { Tooltip } from '../material/tooltip'
-import { push } from '../navigation/routing'
 import { LoadingDotsArea } from '../progress/dots'
 import { useAppDispatch, useAppSelector } from '../redux-hooks'
 import { background600, colorError, colorTextFaint, colorTextSecondary } from '../styles/colors'
 import { body1, caption, headline4, headline6, subtitle1 } from '../styles/typography'
-import { getLeaguesList } from './action-creators'
+import { getLeaguesList, navigateToLeague } from './action-creators'
 import { LeagueDetails } from './league-details'
 
 const LoadableLeagueAdmin = React.lazy(async () => ({
@@ -271,7 +270,7 @@ function LeagueCard({
   type: LeagueSectionType
   curDate: number
 }) {
-  const onViewInfo = () => push(`/leagues/${league.id}`)
+  const onViewInfo = () => navigateToLeague(league.id, league)
   const [buttonProps, rippleRef] = useButtonState({ onClick: onViewInfo })
 
   let dateText: string
@@ -313,7 +312,11 @@ function LeagueCard({
       <Spacer />
       <LeagueActions>
         <div />
-        <TextButton label='View info' onClick={onViewInfo} color='accent' />
+        {/*
+          NOTE(tec27): This intentionally doesn't have an onClick handler as it is handled by the
+          card and having both would cause 2 navigations to occur.
+        */}
+        <TextButton label='View info' color='accent' />
       </LeagueActions>
       <Ripple ref={rippleRef} />
     </LeagueCardRoot>

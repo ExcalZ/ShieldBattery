@@ -1,11 +1,18 @@
 import React from 'react'
+import { useRoute } from 'wouter'
+import logger from '../logging/logger'
 
-export interface LeagueDetailsProps {
-  params: {
-    id: string
+export function LeagueDetails() {
+  const [match, params] = useRoute('/leagues/:id/:slugStr?')
+
+  if (!match) {
+    logger.error('Route not matched but page was rendered')
+    return null
   }
-}
 
-export function LeagueDetails(props: LeagueDetailsProps) {
-  return <span>hello {props.params.id}!</span>
+  return (
+    <span>
+      hello {params.id}! You're called {params.slugStr}
+    </span>
+  )
 }
