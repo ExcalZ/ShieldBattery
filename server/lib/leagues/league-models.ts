@@ -136,6 +136,26 @@ export async function deleteLeague(id: LeagueId, withClient?: DbClient): Promise
   }
 }
 
+/** Returns a league with the matching ID if it exists and should be visible to normal users. */
+export async function getLeague(
+  id: LeagueId,
+  now: Date,
+  withClient?: DbClient,
+): Promise<League | undefined> {
+  const { client, done } = await db(withClient)
+  try {
+    const result = await client.query(sql`
+      SELECT * FROM leagues
+      WHERE id = ${id}
+      AND signups_after <= ${now}
+    `)
+
+    return result.rows.length ? convertLeagueFromDb(result.rows[0]) : undefined
+  } finally {
+    done()
+  }
+}
+
 // TODO(tec27): Paginate these queries
 /**
  * Returns the leagues that have ended.

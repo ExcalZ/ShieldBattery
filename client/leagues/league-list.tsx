@@ -1,13 +1,12 @@
 import React, { Suspense, useEffect, useMemo, useState } from 'react'
-import styled, { css } from 'styled-components'
+import styled from 'styled-components'
 import { ReadonlyDeep } from 'type-fest'
 import { Link, Route, Switch } from 'wouter'
 import { assertUnreachable } from '../../common/assert-unreachable'
-import { LeagueJson, LEAGUE_IMAGE_HEIGHT, LEAGUE_IMAGE_WIDTH } from '../../common/leagues'
+import { LeagueJson } from '../../common/leagues'
 import { matchmakingTypeToLabel } from '../../common/matchmaking'
 import { hasAnyPermission } from '../admin/admin-permissions'
 import { longTimestamp, monthDay, narrowDuration } from '../i18n/date-formats'
-import LeaguesIcon from '../icons/material/social_leaderboard-36px.svg'
 import logger from '../logging/logger'
 import { TextButton, useButtonState } from '../material/button'
 import Card from '../material/card'
@@ -15,10 +14,11 @@ import { Ripple } from '../material/ripple'
 import { Tooltip } from '../material/tooltip'
 import { LoadingDotsArea } from '../progress/dots'
 import { useAppDispatch, useAppSelector } from '../redux-hooks'
-import { background600, colorError, colorTextFaint, colorTextSecondary } from '../styles/colors'
+import { colorError, colorTextSecondary } from '../styles/colors'
 import { body1, caption, headline4, headline6, subtitle1 } from '../styles/typography'
 import { getLeaguesList, navigateToLeague } from './action-creators'
-import { LeagueDetails } from './league-details'
+import { LeagueDetailsPage } from './league-details'
+import { LeagueImage, LeaguePlaceholderImage } from './league-image'
 
 const LoadableLeagueAdmin = React.lazy(async () => ({
   default: (await import('./league-admin')).LeagueAdmin,
@@ -31,7 +31,7 @@ export function LeagueRoot(props: { params: any }) {
     <Suspense fallback={<LoadingDotsArea />}>
       <Switch>
         {isAdmin ? <Route path='/leagues/admin/:rest*' component={LoadableLeagueAdmin} /> : <></>}
-        <Route path='/leagues/:id/:rest*' component={LeagueDetails} />
+        <Route path='/leagues/:id/:rest*' component={LeagueDetailsPage} />
         <Route component={LeagueList} />
       </Switch>
     </Suspense>
@@ -193,33 +193,6 @@ const LeagueCardRoot = styled(Card)`
   cursor: pointer;
 `
 
-const leagueImageCommon = css`
-  width: 100%;
-  aspect-ratio: ${LEAGUE_IMAGE_WIDTH} / ${LEAGUE_IMAGE_HEIGHT};
-  background-color: ${background600};
-  border-radius: 2px;
-`
-
-const LeagueImage = styled.img`
-  ${leagueImageCommon};
-  object-fit: cover;
-`
-
-const LeaguePlaceholderImage = styled.div`
-  ${leagueImageCommon};
-  color: ${colorTextFaint};
-  contain: content;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-`
-
-const PlaceholderIcon = styled(LeaguesIcon)`
-  height: 80px;
-  width: auto;
-`
-
 const LeagueName = styled.div`
   ${headline6};
   margin-top: 16px;
@@ -285,8 +258,10 @@ function LeagueCard({
       dateTooltip = longTimestamp.format(league.startAt)
       break
     case LeagueSectionType.Past:
-      dateText = `${monthDay.format(league.startAt)}–${monthDay.format(league.endAt)}`
-      dateTooltip = `${longTimestamp.format(league.startAt)}–${longTimestamp.format(league.endAt)}`
+      dateText = `${monthDay.format(league.startAt)}\u2013${monthDay.format(league.endAt)}`
+      dateTooltip = `${longTimestamp.format(league.startAt)}\u2013${longTimestamp.format(
+        league.endAt,
+      )}`
       break
     default:
       assertUnreachable(type)
@@ -294,13 +269,7 @@ function LeagueCard({
 
   return (
     <LeagueCardRoot {...buttonProps} tabIndex={0}>
-      {league.imagePath ? (
-        <LeagueImage src={league.imagePath} alt='' draggable={false} />
-      ) : (
-        <LeaguePlaceholderImage>
-          <PlaceholderIcon />
-        </LeaguePlaceholderImage>
-      )}
+      {league.imagePath ? <LeagueImage src={league.imagePath} /> : <LeaguePlaceholderImage />}
       <LeagueName>{league.name}</LeagueName>
       <LeagueFormatAndDate>
         {matchmakingTypeToLabel(league.matchmakingType)} ·{' '}

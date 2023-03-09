@@ -3,10 +3,15 @@ import cuid from 'cuid'
 import httpErrors from 'http-errors'
 import Joi from 'joi'
 import sharp from 'sharp'
+import { assertUnreachable } from '../../../common/assert-unreachable'
 import {
   AdminAddLeagueResponse,
   AdminGetLeaguesResponse,
+  fromClientLeagueId,
+  GetLeagueByIdResponse,
   GetLeaguesListResponse,
+  LeagueErrorCode,
+  LeagueId,
   LEAGUE_IMAGE_HEIGHT,
   LEAGUE_IMAGE_WIDTH,
   ServerAdminAddLeagueRequest,
@@ -14,6 +19,8 @@ import {
 } from '../../../common/leagues'
 import { ALL_MATCHMAKING_TYPES } from '../../../common/matchmaking'
 import transact from '../db/transaction'
+import { CodedError, makeErrorConverterMiddleware } from '../errors/coded-error'
+import { asHttpError } from '../errors/error-with-payload'
 import { writeFile } from '../file-upload'
 import { handleMultipartFiles } from '../file-upload/handle-multipart-files'
 import { httpApi, httpBeforeAll } from '../http/http-api'
@@ -26,12 +33,30 @@ import {
   getAllLeagues,
   getCurrentLeagues,
   getFutureLeagues,
+  getLeague,
   getPastLeagues,
 } from './league-models'
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024
 
+class LeagueApiError extends CodedError<LeagueErrorCode> {}
+
+const convertLeagueApiErrors = makeErrorConverterMiddleware(err => {
+  if (!(err instanceof LeagueApiError)) {
+    throw err
+  }
+
+  switch (err.code) {
+    case LeagueErrorCode.NotFound:
+      throw asHttpError(404, err)
+
+    default:
+      assertUnreachable(err.code)
+  }
+})
+
 @httpApi('/leagues/')
+@httpBeforeAll(convertLeagueApiErrors)
 export class LeagueApi {
   @httpGet('/')
   async getLeagues(ctx: RouterContext): Promise<GetLeaguesListResponse> {
@@ -46,6 +71,31 @@ export class LeagueApi {
       current: current.map(l => toLeagueJson(l)),
       future: future.map(l => toLeagueJson(l)),
     }
+  }
+
+  @httpGet('/:clientId')
+  async getLeagueById(ctx: RouterContext): Promise<GetLeagueByIdResponse> {
+    const { params } = validateRequest(ctx, {
+      params: Joi.object({
+        clientId: Joi.string().required(),
+      }),
+    })
+
+    let serverId: LeagueId
+    try {
+      serverId = fromClientLeagueId(params.clientId)
+    } catch (err) {
+      throw new httpErrors.BadRequest('invalid league id')
+    }
+
+    const now = new Date()
+    const league = await getLeague(serverId, now)
+
+    if (!league) {
+      throw new httpErrors.NotFound('league not found')
+    }
+
+    return { league: toLeagueJson(league) }
   }
 }
 
@@ -70,7 +120,7 @@ export class LeagueAdminApi {
         startAt: Joi.date().timestamp().min(Date.now()).required(),
         endAt: Joi.date().timestamp().min(Date.now()).required(),
         rulesAndInfo: Joi.string(),
-        link: Joi.string(),
+        link: Joi.string().uri({ scheme: ['http', 'https'] }),
         image: Joi.any(),
       }),
     })

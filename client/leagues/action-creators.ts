@@ -4,12 +4,13 @@ import {
   AdminAddLeagueRequest,
   AdminAddLeagueResponse,
   AdminGetLeaguesResponse,
+  GetLeagueByIdResponse,
   GetLeaguesListResponse,
   LeagueJson,
 } from '../../common/leagues'
 import { apiUrl, urlPath } from '../../common/urls'
 import { ThunkAction } from '../dispatch-registry'
-import { push } from '../navigation/routing'
+import { push, replace } from '../navigation/routing'
 import { abortableThunk, RequestHandlingSpec } from '../network/abortable-thunk'
 import { fetchJson } from '../network/fetch'
 
@@ -31,6 +32,11 @@ export function navigateToLeague(
   transitionFn(urlPath`/leagues/${leagueId}/${leagueData ? slug(leagueData.name) : '_'}/`)
 }
 
+// TODO(tec27): Preserve sub-page
+export function correctSlugForLeague(id: string, name: string) {
+  replace(urlPath`/leagues/${id}/${slug(name)}/`)
+}
+
 export function getLeaguesList(spec: RequestHandlingSpec<void>): ThunkAction {
   return abortableThunk(spec, async dispatch => {
     const result = await fetchJson<GetLeaguesListResponse>(apiUrl`leagues/`, {
@@ -39,6 +45,19 @@ export function getLeaguesList(spec: RequestHandlingSpec<void>): ThunkAction {
 
     dispatch({
       type: '@leagues/getList',
+      payload: result,
+    })
+  })
+}
+
+export function getLeagueById(id: string, spec: RequestHandlingSpec<void>): ThunkAction {
+  return abortableThunk(spec, async dispatch => {
+    const result = await fetchJson<GetLeagueByIdResponse>(apiUrl`leagues/${id}/`, {
+      signal: spec.signal,
+    })
+
+    dispatch({
+      type: '@leagues/get',
       payload: result,
     })
   })
@@ -57,7 +76,9 @@ export function adminAddLeague(
   return abortableThunk(spec, async () => {
     const formData = new FormData()
     for (const [key, value] of Object.entries(league)) {
-      formData.append(key, String(value))
+      if (value !== undefined) {
+        formData.append(key, String(value))
+      }
     }
 
     if (league.image) {

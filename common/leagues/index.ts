@@ -82,8 +82,16 @@ export interface AdminAddLeagueResponse {
   league: LeagueJson
 }
 
+export enum LeagueErrorCode {
+  NotFound = 'notFound',
+}
+
 export interface GetLeaguesListResponse {
   past: LeagueJson[]
   current: LeagueJson[]
   future: LeagueJson[]
+}
+
+export interface GetLeagueByIdResponse {
+  league: LeagueJson
 }

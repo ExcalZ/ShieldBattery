@@ -28,6 +28,10 @@ export default immerKeyedReducer(DEFAULT_STATE, {
     state.isLoaded = true
   },
 
+  ['@leagues/get'](state, { payload: { league } }) {
+    state.byId.set(league.id, league)
+  },
+
   [NETWORK_SITE_DISCONNECTED as any]() {
     return DEFAULT_STATE
   },
