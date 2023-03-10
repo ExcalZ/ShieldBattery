@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import slug from 'slug'
 import styled from 'styled-components'
-import { useRoute } from 'wouter'
+import { Link, useRoute } from 'wouter'
 import { LeagueErrorCode } from '../../common/leagues'
 import { matchmakingTypeToLabel } from '../../common/matchmaking'
 import { longTimestamp, monthDay } from '../i18n/date-formats'
@@ -14,7 +14,7 @@ import { ExternalLink } from '../navigation/external-link'
 import { isFetchError } from '../network/fetch-errors'
 import { LoadingDotsArea } from '../progress/dots'
 import { useAppDispatch, useAppSelector } from '../redux-hooks'
-import { colorTextSecondary } from '../styles/colors'
+import { colorError, colorTextSecondary } from '../styles/colors'
 import { headline3, headline5, singleLine, subtitle1 } from '../styles/typography'
 import { correctSlugForLeague, getLeagueById } from './action-creators'
 import { LeagueImage, LeaguePlaceholderImage } from './league-image'
@@ -107,6 +107,17 @@ const StyledMarkdown = styled(Markdown)`
   }
 `
 
+const ErrorLayout = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+`
+
+const ErrorText = styled.div`
+  ${subtitle1};
+  color: ${colorError};
+`
+
 export interface LeagueDetailsProps {
   id: string
 }
@@ -140,14 +151,23 @@ export function LeagueDetails({ id }: LeagueDetailsProps) {
   }, [id, dispatch])
 
   if (error) {
-    // FIXME: Make these look nice
     if (isFetchError(error) && error.code === LeagueErrorCode.NotFound) {
-      return <span>League not found</span>
+      return (
+        <ErrorLayout>
+          <ErrorText>League not found</ErrorText>
+          <Link href='/leagues'>Go back to list</Link>
+        </ErrorLayout>
+      )
     } else {
       return (
-        <span>
-          There was an error retrieving this league: {(error as any).statusText ?? error.toString()}
-        </span>
+        <ErrorLayout>
+          <ErrorText>
+            There was an error retrieving this league:{' '}
+            {(error as any).statusText ?? error.toString()}
+          </ErrorText>
+
+          <Link href='/leagues'>Go back to list</Link>
+        </ErrorLayout>
       )
     }
   } else if (!league) {

@@ -92,7 +92,7 @@ export class LeagueApi {
     const league = await getLeague(serverId, now)
 
     if (!league) {
-      throw new httpErrors.NotFound('league not found')
+      throw new LeagueApiError(LeagueErrorCode.NotFound, 'league not found')
     }
 
     return { league: toLeagueJson(league) }
