@@ -30,7 +30,7 @@ export function LeagueDetailsPage() {
 
   useEffect(() => {
     if (match && leagueName && slug(leagueName) !== slugStr) {
-      correctSlugForLeague(id, leagueName)
+      correctSlugForLeague(id!, leagueName)
     }
   }, [match, id, slugStr, leagueName])
 

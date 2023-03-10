@@ -54,6 +54,11 @@ const StyledMarkdown = styled(LoadableMarkdown)`
     margin-top: 12px;
     margin-bottom: 8px;
   }
+
+  ul,
+  ol {
+    padding-left: 28px;
+  }
 `
 
 export interface MarkdownProps {

@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useState } from 'react'
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import styled from 'styled-components'
 import { ReadonlyDeep } from 'type-fest'
 import { Link, Route, Switch } from 'wouter'
@@ -6,6 +6,8 @@ import { assertUnreachable } from '../../common/assert-unreachable'
 import { LeagueJson } from '../../common/leagues'
 import { matchmakingTypeToLabel } from '../../common/matchmaking'
 import { hasAnyPermission } from '../admin/admin-permissions'
+import { openDialog } from '../dialogs/action-creators'
+import { DialogType } from '../dialogs/dialog-type'
 import { longTimestamp, monthDay, narrowDuration } from '../i18n/date-formats'
 import logger from '../logging/logger'
 import { TextButton, useButtonState } from '../material/button'
@@ -14,7 +16,8 @@ import { Ripple } from '../material/ripple'
 import { Tooltip } from '../material/tooltip'
 import { LoadingDotsArea } from '../progress/dots'
 import { useAppDispatch, useAppSelector } from '../redux-hooks'
-import { colorError, colorTextSecondary } from '../styles/colors'
+import { colorError, colorTextFaint, colorTextSecondary } from '../styles/colors'
+import { FlexSpacer } from '../styles/flex-spacer'
 import { body1, caption, headline4, headline6, subtitle1 } from '../styles/typography'
 import { getLeaguesList, navigateToLeague } from './action-creators'
 import { LeagueDetailsPage } from './league-details'
@@ -83,6 +86,18 @@ function LeagueList() {
     return { pastLeagues, currentLeagues, futureLeagues }
   }, [past, current, future, byId])
 
+  const onHowItWorksClick = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault()
+      dispatch(
+        openDialog({
+          type: DialogType.LeagueExplainer,
+        }),
+      )
+    },
+    [dispatch],
+  )
+
   useEffect(() => {
     const controller = new AbortController()
     const signal = controller.signal
@@ -112,17 +127,19 @@ function LeagueList() {
       <TitleRow>
         <Title>Leagues</Title>
         {isAdmin ? <Link href='/leagues/admin'>Manage leagues</Link> : null}
+        <FlexSpacer />
+        <Link href='#' onClick={onHowItWorksClick}>
+          How do leagues work?
+        </Link>
       </TitleRow>
 
       {!isLoading && error ? <ErrorText>Error loading leagues</ErrorText> : null}
 
-      {currentLeagues.length ? (
-        <LeagueSection
-          label='Currently running'
-          leagues={currentLeagues}
-          type={LeagueSectionType.Current}
-        />
-      ) : null}
+      <LeagueSection
+        label='Currently running'
+        leagues={currentLeagues}
+        type={LeagueSectionType.Current}
+      />
       {futureLeagues.length ? (
         <LeagueSection
           label='Accepting signups'
@@ -158,6 +175,11 @@ const SectionCards = styled.div`
   gap: 8px;
 `
 
+const EmptyText = styled.div`
+  ${body1};
+  color: ${colorTextFaint};
+`
+
 function LeagueSection({
   label,
   leagues,
@@ -173,9 +195,11 @@ function LeagueSection({
     <SectionRoot>
       <SectionLabel>{label}</SectionLabel>
       <SectionCards>
-        {leagues.map(l => (
-          <LeagueCard key={l.id} league={l} type={type} curDate={curDate} />
-        ))}
+        {leagues.length ? (
+          leagues.map(l => <LeagueCard key={l.id} league={l} type={type} curDate={curDate} />)
+        ) : (
+          <EmptyText>No matching leagues</EmptyText>
+        )}
       </SectionCards>
     </SectionRoot>
   )
@@ -222,12 +246,6 @@ const LeagueActions = styled.div`
 
   display: flex;
   justify-content: space-between;
-`
-
-const Spacer = styled.div`
-  width: 0;
-  height: 0;
-  flex-grow: 1;
 `
 
 const DateTooltip = styled(Tooltip)`
@@ -278,7 +296,7 @@ function LeagueCard({
         </DateTooltip>
       </LeagueFormatAndDate>
       <LeagueDescription>{league.description}</LeagueDescription>
-      <Spacer />
+      <FlexSpacer />
       <LeagueActions>
         <div />
         {/*

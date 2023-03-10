@@ -13,6 +13,7 @@ import { FocusTrap } from '../dom/focus-trap'
 import { useExternalElementRef } from '../dom/use-external-element-ref'
 import DownloadDialog from '../download/download-dialog'
 import { KeyListenerBoundary } from '../keyboard/key-listener'
+import { LeagueExplainerDialog } from '../leagues/league-explainer'
 import MapDetailsDialog from '../maps/map-details'
 import { MapPreviewDialog } from '../maps/map-preview'
 import AcceptMatch from '../matchmaking/accept-match'
@@ -87,6 +88,8 @@ function getDialog(dialogType: DialogType): {
       return { component: DownloadDialog, modal: false }
     case DialogType.ExternalLink:
       return { component: ExternalLinkDialog, modal: false }
+    case DialogType.LeagueExplainer:
+      return { component: LeagueExplainerDialog, modal: false }
     case DialogType.MapDetails:
       return { component: MapDetailsDialog, modal: false }
     case DialogType.MapPreview:
