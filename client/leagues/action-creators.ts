@@ -6,6 +6,7 @@ import {
   AdminGetLeaguesResponse,
   GetLeagueByIdResponse,
   GetLeaguesListResponse,
+  JoinLeagueResponse,
   LeagueJson,
 } from '../../common/leagues'
 import { apiUrl, urlPath } from '../../common/urls'
@@ -58,6 +59,20 @@ export function getLeagueById(id: string, spec: RequestHandlingSpec<void>): Thun
 
     dispatch({
       type: '@leagues/get',
+      payload: result,
+    })
+  })
+}
+
+export function joinLeague(id: string, spec: RequestHandlingSpec<void>): ThunkAction {
+  return abortableThunk(spec, async dispatch => {
+    const result = await fetchJson<JoinLeagueResponse>(apiUrl`leagues/${id}/join/`, {
+      method: 'POST',
+      signal: spec.signal,
+    })
+
+    dispatch({
+      type: '@leagues/join',
       payload: result,
     })
   })

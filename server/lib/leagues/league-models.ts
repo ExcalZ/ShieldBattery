@@ -1,6 +1,8 @@
 import sql from 'sql-template-strings'
 import { assertUnreachable } from '../../../common/assert-unreachable'
 import { League, LeagueId } from '../../../common/leagues'
+import { RaceStats } from '../../../common/races'
+import { SbUserId } from '../../../common/users/sb-user'
 import db, { DbClient } from '../db'
 import { Dbify } from '../db/types'
 import { getUrl } from '../file-upload'
@@ -222,6 +224,81 @@ export async function getAllLeagues(withClient?: DbClient): Promise<League[]> {
       ORDER BY start_at DESC
     `)
     return result.rows.map(convertLeagueFromDb)
+  } finally {
+    done()
+  }
+}
+
+export interface LeagueUser extends RaceStats {
+  leagueId: LeagueId
+  userId: SbUserId
+  lastPlayedDate?: Date
+  points: number
+  pointsConverged: boolean
+  wins: number
+  losses: number
+}
+
+type DbLeagueUser = Dbify<LeagueUser>
+
+function convertLeagueUserFromDb(dbUser: DbLeagueUser): LeagueUser {
+  return {
+    leagueId: dbUser.league_id,
+    userId: dbUser.user_id,
+    lastPlayedDate: dbUser.last_played_date,
+    points: dbUser.points,
+    pointsConverged: dbUser.points_converged,
+    wins: dbUser.wins,
+    losses: dbUser.losses,
+    pWins: dbUser.p_wins,
+    pLosses: dbUser.p_losses,
+    tWins: dbUser.t_wins,
+    tLosses: dbUser.t_losses,
+    zWins: dbUser.z_wins,
+    zLosses: dbUser.z_losses,
+    rWins: dbUser.r_wins,
+    rLosses: dbUser.r_losses,
+    rPWins: dbUser.r_p_wins,
+    rPLosses: dbUser.r_p_losses,
+    rTWins: dbUser.r_t_wins,
+    rTLosses: dbUser.r_t_losses,
+    rZWins: dbUser.r_z_wins,
+    rZLosses: dbUser.r_z_losses,
+  }
+}
+
+export async function getLeagueUser(
+  leagueId: LeagueId,
+  userId: SbUserId,
+  withClient?: DbClient,
+): Promise<LeagueUser | undefined> {
+  const { client, done } = await db(withClient)
+  try {
+    const result = await client.query<DbLeagueUser>(sql`
+      SELECT * FROM league_users
+      WHERE league_id = ${leagueId} AND user_id = ${userId}
+    `)
+
+    return result.rows.length ? convertLeagueUserFromDb(result.rows[0]) : undefined
+  } finally {
+    done()
+  }
+}
+
+export async function joinLeagueForUser(
+  leagueId: LeagueId,
+  userId: SbUserId,
+  withClient?: DbClient,
+): Promise<LeagueUser> {
+  const { client, done } = await db(withClient)
+  try {
+    const result = await client.query(sql`
+      INSERT INTO league_users (league_id, user_id)
+      VALUES (${leagueId}, ${userId})
+      RETURNING *
+    `)
+
+    return convertLeagueUserFromDb(result.rows[0])
   } finally {
     done()
   }

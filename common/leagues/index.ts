@@ -2,6 +2,8 @@ import { Merge, Opaque } from 'type-fest'
 import { Jsonify } from '../json'
 import { MatchmakingType } from '../matchmaking'
 import { decodePrettyId, encodePrettyId } from '../pretty-id'
+import { RaceStats } from '../races'
+import { SbUserId } from '../users/sb-user'
 
 export const LEAGUE_IMAGE_WIDTH = 704
 export const LEAGUE_IMAGE_HEIGHT = 288
@@ -29,6 +31,15 @@ export function toClientLeagueId(id: LeagueId): ClientLeagueId {
 
 export function fromClientLeagueId(id: ClientLeagueId): LeagueId {
   return decodePrettyId(id) as LeagueId
+}
+
+/**
+ * Converts a client league ID string to a properly typed version. Prefer better ways of getting a
+ * typed version, such as retrieving the value from the database or using a Joi validator. This
+ * method should mainly be considered for testing and internal behavior.
+ */
+export function makeClientLeagueId(id: string): ClientLeagueId {
+  return id as ClientLeagueId
 }
 
 export interface League {
@@ -61,6 +72,42 @@ export function toLeagueJson(league: League): LeagueJson {
   }
 }
 
+export interface ClientLeagueUser extends RaceStats {
+  leagueId: ClientLeagueId
+  userId: SbUserId
+  points: number
+  wins: number
+  losses: number
+  lastPlayedDate?: Date
+}
+
+export type ClientLeagueUserJson = Jsonify<ClientLeagueUser>
+
+export function toClientLeagueUserJson(user: ClientLeagueUser): ClientLeagueUserJson {
+  return {
+    leagueId: user.leagueId,
+    userId: user.userId,
+    points: user.points,
+    wins: user.wins,
+    losses: user.losses,
+    lastPlayedDate: user.lastPlayedDate ? Number(user.lastPlayedDate) : undefined,
+    pWins: user.pWins,
+    pLosses: user.pLosses,
+    tWins: user.tWins,
+    tLosses: user.tLosses,
+    zWins: user.zWins,
+    zLosses: user.zLosses,
+    rWins: user.rWins,
+    rLosses: user.rLosses,
+    rPWins: user.rPWins,
+    rPLosses: user.rPLosses,
+    rTWins: user.rTWins,
+    rTLosses: user.rTLosses,
+    rZWins: user.rZWins,
+    rZLosses: user.rZLosses,
+  }
+}
+
 export interface AdminGetLeaguesResponse {
   leagues: LeagueJson[]
 }
@@ -84,6 +131,7 @@ export interface AdminAddLeagueResponse {
 
 export enum LeagueErrorCode {
   NotFound = 'notFound',
+  AlreadyEnded = 'alreadyEnded',
 }
 
 export interface GetLeaguesListResponse {
@@ -94,4 +142,10 @@ export interface GetLeaguesListResponse {
 
 export interface GetLeagueByIdResponse {
   league: LeagueJson
+  selfLeagueUser?: ClientLeagueUserJson
+}
+
+export interface JoinLeagueResponse {
+  league: LeagueJson
+  selfLeagueUser: ClientLeagueUserJson
 }

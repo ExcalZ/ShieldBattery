@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react'
 import slug from 'slug'
 import styled from 'styled-components'
 import { Link, useRoute } from 'wouter'
-import { LeagueErrorCode } from '../../common/leagues'
+import { ClientLeagueId, LeagueErrorCode, makeClientLeagueId } from '../../common/leagues'
 import { matchmakingTypeToLabel } from '../../common/matchmaking'
+import { useSelfUser } from '../auth/state-hooks'
 import { longTimestamp, monthDay } from '../i18n/date-formats'
 import logger from '../logging/logger'
 import { Markdown } from '../markdown/markdown'
@@ -14,9 +15,11 @@ import { ExternalLink } from '../navigation/external-link'
 import { isFetchError } from '../network/fetch-errors'
 import { LoadingDotsArea } from '../progress/dots'
 import { useAppDispatch, useAppSelector } from '../redux-hooks'
+import { openSnackbar } from '../snackbars/action-creators'
+import { useStableCallback } from '../state-hooks'
 import { colorError, colorTextSecondary } from '../styles/colors'
 import { headline3, headline5, singleLine, subtitle1 } from '../styles/typography'
-import { correctSlugForLeague, getLeagueById } from './action-creators'
+import { correctSlugForLeague, getLeagueById, joinLeague } from './action-creators'
 import { LeagueImage, LeaguePlaceholderImage } from './league-image'
 
 const PageRoot = styled.div`
@@ -26,7 +29,9 @@ const PageRoot = styled.div`
 export function LeagueDetailsPage() {
   const [match, params] = useRoute('/leagues/:id/:slugStr?')
   const { id, slugStr } = params ?? {}
-  const leagueName = useAppSelector(s => (id ? s.leagues.byId.get(id)?.name : undefined))
+  const leagueName = useAppSelector(s =>
+    id ? s.leagues.byId.get(makeClientLeagueId(id))?.name : undefined,
+  )
 
   useEffect(() => {
     if (match && leagueName && slug(leagueName) !== slugStr) {
@@ -41,7 +46,7 @@ export function LeagueDetailsPage() {
 
   return (
     <PageRoot>
-      <LeagueDetails id={params.id} />
+      <LeagueDetails id={makeClientLeagueId(params.id)} />
     </PageRoot>
   )
 }
@@ -119,28 +124,65 @@ const ErrorText = styled.div`
 `
 
 export interface LeagueDetailsProps {
-  id: string
+  id: ClientLeagueId
 }
 
 export function LeagueDetails({ id }: LeagueDetailsProps) {
   const dispatch = useAppDispatch()
+  const [isFetching, setIsFetching] = useState(false)
   const [error, setError] = useState<Error>()
 
+  const isLoggedIn = useSelfUser().id !== -1
   const league = useAppSelector(s => s.leagues.byId.get(id))
+  const selfLeagueUser = useAppSelector(s => s.leagues.selfLeagues.get(id))
+
+  const [isJoining, setIsJoining] = useState(false)
+  const onJoinClick = useStableCallback(() => {
+    setIsJoining(true)
+
+    dispatch(
+      joinLeague(id, {
+        onSuccess() {
+          setIsJoining(false)
+          dispatch(openSnackbar({ message: 'League joined' }))
+        },
+        onError(err) {
+          setIsJoining(false)
+          if (isFetchError(err) && err.code === LeagueErrorCode.AlreadyEnded) {
+            dispatch(
+              openSnackbar({ message: "Couldn't join because the league has already ended" }),
+            )
+          } else {
+            dispatch(
+              openSnackbar({
+                message: `Couldn't join league: ${
+                  isFetchError(err) ? err.statusText : err.message
+                }`,
+              }),
+            )
+          }
+          logger.error(`Error joining league: ${err.stack ?? err}`)
+        },
+      }),
+    )
+  })
 
   useEffect(() => {
     const controller = new AbortController()
     const signal = controller.signal
 
     setError(undefined)
+    setIsFetching(true)
 
     dispatch(
       getLeagueById(id, {
         signal,
         onSuccess(res) {
+          setIsFetching(false)
           setError(undefined)
         },
         onError(err) {
+          setIsFetching(false)
           setError(err)
           logger.error(`Error loading leagues list: ${err.stack ?? err}`)
         },
@@ -180,6 +222,8 @@ export function LeagueDetails({ id }: LeagueDetailsProps) {
     league.endAt,
   )}`
 
+  const isJoinable = isLoggedIn && !selfLeagueUser && league.endAt > Date.now()
+
   return (
     <DetailsRoot>
       <div>
@@ -199,7 +243,13 @@ export function LeagueDetails({ id }: LeagueDetailsProps) {
           <TabItem value='info' text='Info' />
           <TabItem value='leaderboard' text='Leaderboard' />
         </Tabs>
-        <RaisedButton label='Join' onClick={() => {}} />
+        {(isJoinable || selfLeagueUser) && (!isFetching || selfLeagueUser) ? (
+          <RaisedButton
+            label={selfLeagueUser ? 'Joined' : 'Join'}
+            disabled={!!selfLeagueUser || isJoining}
+            onClick={onJoinClick}
+          />
+        ) : undefined}
       </TabsAndJoin>
       {league.imagePath ? <LeagueImage src={league.imagePath} /> : <LeaguePlaceholderImage />}
       <TextSection>

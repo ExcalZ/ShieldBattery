@@ -7,17 +7,21 @@ import { assertUnreachable } from '../../../common/assert-unreachable'
 import {
   AdminAddLeagueResponse,
   AdminGetLeaguesResponse,
+  ClientLeagueId,
   fromClientLeagueId,
   GetLeagueByIdResponse,
   GetLeaguesListResponse,
+  JoinLeagueResponse,
   LeagueErrorCode,
   LeagueId,
   LEAGUE_IMAGE_HEIGHT,
   LEAGUE_IMAGE_WIDTH,
   ServerAdminAddLeagueRequest,
+  toClientLeagueUserJson,
   toLeagueJson,
 } from '../../../common/leagues'
 import { ALL_MATCHMAKING_TYPES } from '../../../common/matchmaking'
+import { UNIQUE_VIOLATION } from '../db/pg-error-codes'
 import transact from '../db/transaction'
 import { CodedError, makeErrorConverterMiddleware } from '../errors/coded-error'
 import { asHttpError } from '../errors/error-with-payload'
@@ -27,6 +31,7 @@ import { httpApi, httpBeforeAll } from '../http/http-api'
 import { httpBefore, httpGet, httpPost } from '../http/route-decorators'
 import { checkAllPermissions } from '../permissions/check-permissions'
 import ensureLoggedIn from '../session/ensure-logged-in'
+import { joiPrettyId } from '../validation/joi-pretty-id'
 import { validateRequest } from '../validation/joi-validator'
 import {
   createLeague,
@@ -34,7 +39,10 @@ import {
   getCurrentLeagues,
   getFutureLeagues,
   getLeague,
+  getLeagueUser,
   getPastLeagues,
+  joinLeagueForUser,
+  LeagueUser,
 } from './league-models'
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024
@@ -49,6 +57,8 @@ const convertLeagueApiErrors = makeErrorConverterMiddleware(err => {
   switch (err.code) {
     case LeagueErrorCode.NotFound:
       throw asHttpError(404, err)
+    case LeagueErrorCode.AlreadyEnded:
+      throw asHttpError(410, err)
 
     default:
       assertUnreachable(err.code)
@@ -73,29 +83,77 @@ export class LeagueApi {
     }
   }
 
-  @httpGet('/:clientId')
-  async getLeagueById(ctx: RouterContext): Promise<GetLeagueByIdResponse> {
+  private leagueIdFromUrl(ctx: RouterContext): LeagueId {
     const { params } = validateRequest(ctx, {
-      params: Joi.object({
-        clientId: Joi.string().required(),
+      params: Joi.object<{ clientLeagueId: ClientLeagueId }>({
+        clientLeagueId: joiPrettyId().required(),
       }),
     })
 
-    let serverId: LeagueId
     try {
-      serverId = fromClientLeagueId(params.clientId)
+      return fromClientLeagueId(params.clientLeagueId)
     } catch (err) {
       throw new httpErrors.BadRequest('invalid league id')
     }
+  }
 
+  @httpGet('/:clientLeagueId')
+  async getLeagueById(ctx: RouterContext): Promise<GetLeagueByIdResponse> {
+    const leagueId = this.leagueIdFromUrl(ctx)
     const now = new Date()
-    const league = await getLeague(serverId, now)
+    const league = await getLeague(leagueId, now)
 
     if (!league) {
       throw new LeagueApiError(LeagueErrorCode.NotFound, 'league not found')
     }
 
-    return { league: toLeagueJson(league) }
+    let selfLeagueUser: LeagueUser | undefined
+    if (ctx.session?.userId) {
+      selfLeagueUser = await getLeagueUser(leagueId, ctx.session.userId)
+    }
+
+    const leagueJson = toLeagueJson(league)
+
+    return {
+      league: leagueJson,
+      selfLeagueUser: selfLeagueUser
+        ? toClientLeagueUserJson({ ...selfLeagueUser, leagueId: leagueJson.id })
+        : undefined,
+    }
+  }
+
+  @httpPost('/:clientLeagueId/join')
+  @httpBefore(ensureLoggedIn)
+  async joinLeague(ctx: RouterContext): Promise<JoinLeagueResponse> {
+    const leagueId = this.leagueIdFromUrl(ctx)
+    const now = new Date()
+    const league = await getLeague(leagueId, now)
+
+    if (!league) {
+      throw new LeagueApiError(LeagueErrorCode.NotFound, 'league not found')
+    } else if (league.endAt <= now) {
+      throw new LeagueApiError(LeagueErrorCode.AlreadyEnded, 'league already ended')
+    }
+
+    let selfLeagueUser: LeagueUser | undefined
+    try {
+      selfLeagueUser = await joinLeagueForUser(leagueId, ctx.session!.userId)
+    } catch (err: any) {
+      if (err.code === UNIQUE_VIOLATION) {
+        selfLeagueUser = await getLeagueUser(leagueId, ctx.session!.userId)
+      }
+    }
+
+    if (!selfLeagueUser) {
+      // This should never really happen, so we don't use an error code for it
+      throw new Error('League was joined but no LeagueUser was returned')
+    }
+
+    const leagueJson = toLeagueJson(league)
+    return {
+      league: leagueJson,
+      selfLeagueUser: toClientLeagueUserJson({ ...selfLeagueUser, leagueId: leagueJson.id }),
+    }
   }
 }
 
