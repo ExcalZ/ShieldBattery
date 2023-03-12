@@ -1,6 +1,7 @@
 import sql from 'sql-template-strings'
 import { assertUnreachable } from '../../../common/assert-unreachable'
 import { League, LeagueId } from '../../../common/leagues'
+import { MatchmakingResult } from '../../../common/matchmaking'
 import { RaceStats } from '../../../common/races'
 import { SbUserId } from '../../../common/users/sb-user'
 import db, { DbClient } from '../db'
@@ -319,4 +320,46 @@ export async function joinLeagueForUser(
   } finally {
     done()
   }
+}
+
+export interface LeagueUserChange {
+  userId: SbUserId
+  leagueId: LeagueId
+  gameId: string
+  changeDate: Date
+
+  outcome: MatchmakingResult
+  points: number
+  pointsChange: number
+  pointsConverged: boolean
+}
+
+type DbLeagueUserChange = Dbify<LeagueUserChange>
+
+// TODO(tec27): Remove this lint disable when we inevitably need this function
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function convertLeagueUserChangeFromDb(dbChange: DbLeagueUserChange): LeagueUserChange {
+  return {
+    userId: dbChange.user_id,
+    leagueId: dbChange.league_id,
+    gameId: dbChange.game_id,
+    changeDate: dbChange.change_date,
+    outcome: dbChange.outcome,
+    points: dbChange.points,
+    pointsChange: dbChange.points_change,
+    pointsConverged: dbChange.points_converged,
+  }
+}
+
+export async function insertLeagueUserChange(
+  change: LeagueUserChange,
+  client: DbClient,
+): Promise<void> {
+  await client.query(sql`
+    INSERT INTO league_user_changes
+      (user_id, league_id, game_id, change_date, outcome, points, points_change, points_converged)
+    VALUES
+      (${change.userId}, ${change.leagueId}, ${change.gameId}, ${change.changeDate},
+       ${change.outcome}, ${change.points}, ${change.pointsChange}, ${change.pointsConverged})
+  `)
 }

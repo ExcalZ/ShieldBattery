@@ -339,29 +339,33 @@ export default class GameResultService {
           results: reconciled.results,
           mmrs,
           teams,
+          // FIXME: get actual active leagues
+          activeLeagues: new Map(),
         })
 
         for (const mmr of mmrs) {
-          const change = ratingChanges.get(mmr.userId)!
-          matchmakingDbPromises.push(insertMatchmakingRatingChange(client, change))
+          const { matchmaking: matchmakingChange, leagues: leagueChanges } = ratingChanges.get(
+            mmr.userId,
+          )!
+          matchmakingDbPromises.push(insertMatchmakingRatingChange(client, matchmakingChange))
 
           const selectedRace = idToSelectedRace.get(mmr.userId)!
           const assignedRace = reconciled.results.get(mmr.userId)!.race
-          const winCount = change.outcome === 'win' ? 1 : 0
-          const lossCount = change.outcome === 'win' ? 0 : 1
+          const winCount = matchmakingChange.outcome === 'win' ? 1 : 0
+          const lossCount = matchmakingChange.outcome === 'win' ? 0 : 1
 
           const updatedMmr: MatchmakingRating = {
             userId: mmr.userId,
             matchmakingType: mmr.matchmakingType,
             seasonId: mmr.seasonId,
-            rating: change.rating,
-            uncertainty: change.uncertainty,
-            volatility: change.volatility,
-            points: change.points,
-            pointsConverged: change.pointsConverged,
-            bonusUsed: change.bonusUsed,
+            rating: matchmakingChange.rating,
+            uncertainty: matchmakingChange.uncertainty,
+            volatility: matchmakingChange.volatility,
+            points: matchmakingChange.points,
+            pointsConverged: matchmakingChange.pointsConverged,
+            bonusUsed: matchmakingChange.bonusUsed,
             numGamesPlayed: mmr.numGamesPlayed + 1,
-            lifetimeGames: change.lifetimeGames,
+            lifetimeGames: matchmakingChange.lifetimeGames,
             lastPlayedDate: reconcileDate,
             wins: mmr.wins + winCount,
             losses: mmr.losses + lossCount,
@@ -384,6 +388,8 @@ export default class GameResultService {
           }
 
           matchmakingDbPromises.push(updateMatchmakingRating(client, updatedMmr))
+
+          // FIXME: update LeagueUsers
         }
       }
       const userPromises = resultEntries.map(([userId, result]) =>
@@ -416,6 +422,8 @@ export default class GameResultService {
         ...statsUpdatePromises,
         setReconciledResult(client, gameId, reconciled),
       ])
+
+      // FIXME: update league leaderboards
     })
   }
 
