@@ -285,6 +285,23 @@ export async function getLeagueUser(
   }
 }
 
+export async function getAllLeaguesForUser(
+  userId: SbUserId,
+  withClient?: DbClient,
+): Promise<LeagueUser[]> {
+  const { client, done } = await db(withClient)
+  try {
+    const result = await client.query<DbLeagueUser>(sql`
+      SELECT * FROM league_users
+      WHERE user_id = ${userId}
+    `)
+
+    return result.rows.map(convertLeagueUserFromDb)
+  } finally {
+    done()
+  }
+}
+
 export async function joinLeagueForUser(
   leagueId: LeagueId,
   userId: SbUserId,

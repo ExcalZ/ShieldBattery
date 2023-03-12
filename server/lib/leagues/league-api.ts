@@ -17,6 +17,7 @@ import {
   LEAGUE_IMAGE_HEIGHT,
   LEAGUE_IMAGE_WIDTH,
   ServerAdminAddLeagueRequest,
+  toClientLeagueId,
   toClientLeagueUserJson,
   toLeagueJson,
 } from '../../../common/leagues'
@@ -36,6 +37,7 @@ import { validateRequest } from '../validation/joi-validator'
 import {
   createLeague,
   getAllLeagues,
+  getAllLeaguesForUser,
   getCurrentLeagues,
   getFutureLeagues,
   getLeague,
@@ -71,15 +73,20 @@ export class LeagueApi {
   @httpGet('/')
   async getLeagues(ctx: RouterContext): Promise<GetLeaguesListResponse> {
     const now = new Date()
-    const [past, current, future] = await Promise.all([
+    const isLoggedIn = !!ctx.session?.userId
+    const [past, current, future, selfLeagues] = await Promise.all([
       getPastLeagues(now),
       getCurrentLeagues(now),
       getFutureLeagues(now),
+      isLoggedIn ? getAllLeaguesForUser(ctx.session!.userId) : [],
     ])
     return {
       past: past.map(l => toLeagueJson(l)),
       current: current.map(l => toLeagueJson(l)),
       future: future.map(l => toLeagueJson(l)),
+      selfLeagues: selfLeagues.map(lu =>
+        toClientLeagueUserJson({ ...lu, leagueId: toClientLeagueId(lu.leagueId) }),
+      ),
     }
   }
 

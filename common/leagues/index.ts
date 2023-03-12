@@ -138,6 +138,8 @@ export interface GetLeaguesListResponse {
   past: LeagueJson[]
   current: LeagueJson[]
   future: LeagueJson[]
+
+  selfLeagues: ClientLeagueUserJson[]
 }
 
 export interface GetLeagueByIdResponse {

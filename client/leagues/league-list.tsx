@@ -3,12 +3,13 @@ import styled from 'styled-components'
 import { ReadonlyDeep } from 'type-fest'
 import { Link, Route, Switch } from 'wouter'
 import { assertUnreachable } from '../../common/assert-unreachable'
-import { LeagueJson } from '../../common/leagues'
+import { ClientLeagueId, ClientLeagueUserJson, LeagueJson } from '../../common/leagues'
 import { matchmakingTypeToLabel } from '../../common/matchmaking'
 import { hasAnyPermission } from '../admin/admin-permissions'
 import { openDialog } from '../dialogs/action-creators'
 import { DialogType } from '../dialogs/dialog-type'
 import { longTimestamp, monthDay, narrowDuration } from '../i18n/date-formats'
+import CheckIcon from '../icons/material/check-24px.svg'
 import logger from '../logging/logger'
 import { TextButton, useButtonState } from '../material/button'
 import Card from '../material/card'
@@ -74,7 +75,7 @@ enum LeagueSectionType {
 function LeagueList() {
   const dispatch = useAppDispatch()
   const isAdmin = useAppSelector(s => hasAnyPermission(s.auth, 'manageLeagues'))
-  const { past, current, future, byId } = useAppSelector(s => s.leagues)
+  const { past, current, future, byId, selfLeagues } = useAppSelector(s => s.leagues)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error>()
 
@@ -135,20 +136,29 @@ function LeagueList() {
 
       {!isLoading && error ? <ErrorText>Error loading leagues</ErrorText> : null}
 
-      <LeagueSection
-        label='Currently running'
-        leagues={currentLeagues}
-        type={LeagueSectionType.Current}
-      />
+      {!isLoading || currentLeagues.length ? (
+        <LeagueSection
+          label='Currently running'
+          leagues={currentLeagues}
+          joinedLeagues={selfLeagues}
+          type={LeagueSectionType.Current}
+        />
+      ) : undefined}
       {futureLeagues.length ? (
         <LeagueSection
           label='Accepting signups'
           leagues={futureLeagues}
+          joinedLeagues={selfLeagues}
           type={LeagueSectionType.Future}
         />
       ) : null}
       {pastLeagues.length ? (
-        <LeagueSection label='Finished' leagues={pastLeagues} type={LeagueSectionType.Past} />
+        <LeagueSection
+          label='Finished'
+          leagues={pastLeagues}
+          joinedLeagues={selfLeagues}
+          type={LeagueSectionType.Past}
+        />
       ) : null}
 
       {isLoading ? <LoadingDotsArea /> : null}
@@ -183,10 +193,12 @@ const EmptyText = styled.div`
 function LeagueSection({
   label,
   leagues,
+  joinedLeagues,
   type,
 }: {
   label: string
   leagues: Array<ReadonlyDeep<LeagueJson>>
+  joinedLeagues: ReadonlyDeep<Map<ClientLeagueId, ClientLeagueUserJson>>
   type: LeagueSectionType
 }) {
   const curDate = Date.now()
@@ -196,7 +208,15 @@ function LeagueSection({
       <SectionLabel>{label}</SectionLabel>
       <SectionCards>
         {leagues.length ? (
-          leagues.map(l => <LeagueCard key={l.id} league={l} type={type} curDate={curDate} />)
+          leagues.map(l => (
+            <LeagueCard
+              key={l.id}
+              league={l}
+              type={type}
+              curDate={curDate}
+              joined={joinedLeagues.has(l.id)}
+            />
+          ))
         ) : (
           <EmptyText>No matching leagues</EmptyText>
         )}
@@ -252,14 +272,26 @@ const DateTooltip = styled(Tooltip)`
   display: inline-flex;
 `
 
+const JoinedIndicator = styled.div`
+  ${body1};
+
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  color: ${colorTextFaint};
+`
+
 function LeagueCard({
   league,
   type,
   curDate,
+  joined,
 }: {
   league: ReadonlyDeep<LeagueJson>
   type: LeagueSectionType
   curDate: number
+  joined: boolean
 }) {
   const onViewInfo = () => navigateToLeague(league.id, league)
   const [buttonProps, rippleRef] = useButtonState({ onClick: onViewInfo })
@@ -298,7 +330,14 @@ function LeagueCard({
       <LeagueDescription>{league.description}</LeagueDescription>
       <FlexSpacer />
       <LeagueActions>
-        <div />
+        {joined ? (
+          <JoinedIndicator>
+            <CheckIcon />
+            <span>Joined</span>
+          </JoinedIndicator>
+        ) : (
+          <div />
+        )}
         {/*
           NOTE(tec27): This intentionally doesn't have an onClick handler as it is handled by the
           card and having both would cause 2 navigations to occur.

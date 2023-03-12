@@ -22,7 +22,7 @@ const DEFAULT_STATE: ReadonlyDeep<LeagueState> = {
 }
 
 export default immerKeyedReducer(DEFAULT_STATE, {
-  ['@leagues/getList'](state, { payload: { past, current, future } }) {
+  ['@leagues/getList'](state, { payload: { past, current, future, selfLeagues } }) {
     for (const league of past) {
       state.byId.set(league.id, league)
     }
@@ -36,6 +36,8 @@ export default immerKeyedReducer(DEFAULT_STATE, {
     state.past = past.map(l => l.id)
     state.current = current.map(l => l.id)
     state.future = future.map(l => l.id)
+
+    state.selfLeagues = new Map(selfLeagues.map(l => [l.leagueId, l]))
   },
 
   ['@leagues/get'](state, { payload: { league, selfLeagueUser } }) {
