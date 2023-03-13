@@ -17,7 +17,6 @@ import {
 import { RaceChar, raceCharToLabel } from '../../common/races'
 import { SbUser, SbUserId } from '../../common/users/sb-user'
 import { Avatar } from '../avatars/avatar'
-import { useVirtuosoScrollFix } from '../dom/virtuoso-scroll-fix'
 import { longTimestamp, narrowDuration, shortTimestamp } from '../i18n/date-formats'
 import { JsonLocalStorageValue } from '../local-storage'
 import { LadderPlayerIcon } from '../matchmaking/rank-icon'
@@ -31,7 +30,7 @@ import { shadow4dp } from '../material/shadows'
 import { TabItem, Tabs } from '../material/tabs'
 import { Tooltip } from '../material/tooltip'
 import { useLocationSearchParam } from '../navigation/router-hooks'
-import { push, replace } from '../navigation/routing'
+import { push } from '../navigation/routing'
 import { LoadingDotsArea } from '../progress/dots'
 import { useAppDispatch, useAppSelector } from '../redux-hooks'
 import { SearchInput, SearchInputHandle } from '../search/search-input'
@@ -110,9 +109,6 @@ export function LadderRouteComponent(props: { params: any }) {
   const [matches, params] = useRoute('/ladder/:matchmakingType?')
 
   if (!matches) {
-    queueMicrotask(() => {
-      replace('/')
-    })
     return null
   }
 
@@ -484,21 +480,18 @@ export interface LadderTableProps {
 }
 
 export function LadderTable(props: LadderTableProps) {
-  const [setScrollerRef] = useVirtuosoScrollFix()
-
   const containerRef = useRef<HTMLDivElement | null>(null)
   const forceUpdate = useForceUpdate()
   const setContainerRef = useCallback(
     (ref: HTMLDivElement | null) => {
       if (containerRef.current !== ref) {
-        setScrollerRef(ref)
         containerRef.current = ref
         if (ref !== null) {
           forceUpdate()
         }
       }
     },
-    [forceUpdate, setScrollerRef],
+    [forceUpdate],
   )
 
   const {

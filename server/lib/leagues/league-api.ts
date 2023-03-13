@@ -10,6 +10,7 @@ import {
   ClientLeagueId,
   fromClientLeagueId,
   GetLeagueByIdResponse,
+  GetLeagueLeaderboardResponse,
   GetLeaguesListResponse,
   JoinLeagueResponse,
   LeagueErrorCode,
@@ -114,10 +115,7 @@ export class LeagueApi {
   async getLeagueById(ctx: RouterContext): Promise<GetLeagueByIdResponse> {
     const leagueId = this.leagueIdFromUrl(ctx)
     const now = new Date()
-    const [league, topTenUsers] = await Promise.all([
-      getLeague(leagueId, now),
-      getLeaderboard(this.redis, leagueId, 10),
-    ])
+    const league = await getLeague(leagueId, now)
 
     if (!league) {
       throw new LeagueApiError(LeagueErrorCode.NotFound, 'league not found')
@@ -130,18 +128,38 @@ export class LeagueApi {
 
     const leagueJson = toLeagueJson(league)
 
-    const [users, topTen] = await Promise.all([
-      topTenUsers.length > 0 ? findUsersById(topTenUsers) : [],
-      topTenUsers.length > 0 ? getManyLeagueUsers(leagueId, topTenUsers) : [],
-    ])
-
     return {
       league: leagueJson,
       selfLeagueUser: selfLeagueUser
         ? toClientLeagueUserJson({ ...selfLeagueUser, leagueId: leagueJson.id })
         : undefined,
-      topTen: topTenUsers,
-      topTenLeagueUsers: topTen.map(lu =>
+    }
+  }
+
+  @httpGet('/:clientLeagueId/leaderboard')
+  async getLeaderboard(ctx: RouterContext): Promise<GetLeagueLeaderboardResponse> {
+    const leagueId = this.leagueIdFromUrl(ctx)
+    const now = new Date()
+    const [league, leaderboard] = await Promise.all([
+      getLeague(leagueId, now),
+      getLeaderboard(this.redis, leagueId),
+    ])
+
+    if (!league) {
+      throw new LeagueApiError(LeagueErrorCode.NotFound, 'league not found')
+    }
+
+    const leagueJson = toLeagueJson(league)
+
+    const [users, leagueUsers] = await Promise.all([
+      leaderboard.length > 0 ? findUsersById(leaderboard) : [],
+      leaderboard.length > 0 ? getManyLeagueUsers(leagueId, leaderboard) : [],
+    ])
+
+    return {
+      league: leagueJson,
+      leaderboard,
+      leagueUsers: leagueUsers.map(lu =>
         toClientLeagueUserJson({ ...lu, leagueId: leagueJson.id }),
       ),
       users,

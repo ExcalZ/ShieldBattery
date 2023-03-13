@@ -4,7 +4,9 @@ import {
   AdminAddLeagueRequest,
   AdminAddLeagueResponse,
   AdminGetLeaguesResponse,
+  ClientLeagueId,
   GetLeagueByIdResponse,
+  GetLeagueLeaderboardResponse,
   GetLeaguesListResponse,
   JoinLeagueResponse,
   LeagueJson,
@@ -14,6 +16,7 @@ import { ThunkAction } from '../dispatch-registry'
 import { push, replace } from '../navigation/routing'
 import { abortableThunk, RequestHandlingSpec } from '../network/abortable-thunk'
 import { fetchJson } from '../network/fetch'
+import { DetailsSubPage } from './details-sub-page'
 
 /** Navigates to the leagues list. */
 export function navigateToLeaguesList(transitionFn = push) {
@@ -24,18 +27,19 @@ export function navigateToLeaguesList(transitionFn = push) {
  * Navigates to a particular league. If the league data is available/provided, this URL will
  * include a slug (otherwise there will be a redirect once the data has loaded).
  */
-// TODO(tec27): Add a way to navigate to a particular sub-page
 export function navigateToLeague(
-  leagueId: string,
+  leagueId: ClientLeagueId,
   leagueData?: ReadonlyDeep<LeagueJson>,
+  subPage?: DetailsSubPage,
   transitionFn = push,
 ) {
-  transitionFn(urlPath`/leagues/${leagueId}/${leagueData ? slug(leagueData.name) : '_'}/`)
+  transitionFn(
+    urlPath`/leagues/${leagueId}/${leagueData ? slug(leagueData.name) : '_'}/${subPage ?? ''}`,
+  )
 }
 
-// TODO(tec27): Preserve sub-page
-export function correctSlugForLeague(id: string, name: string) {
-  replace(urlPath`/leagues/${id}/${slug(name)}/`)
+export function correctSlugForLeague(id: ClientLeagueId, name: string, subPage?: DetailsSubPage) {
+  replace(urlPath`/leagues/${id}/${slug(name)}/${subPage ?? ''}`)
 }
 
 export function getLeaguesList(spec: RequestHandlingSpec<void>): ThunkAction {
@@ -51,7 +55,7 @@ export function getLeaguesList(spec: RequestHandlingSpec<void>): ThunkAction {
   })
 }
 
-export function getLeagueById(id: string, spec: RequestHandlingSpec<void>): ThunkAction {
+export function getLeagueById(id: ClientLeagueId, spec: RequestHandlingSpec<void>): ThunkAction {
   return abortableThunk(spec, async dispatch => {
     const result = await fetchJson<GetLeagueByIdResponse>(apiUrl`leagues/${id}/`, {
       signal: spec.signal,
@@ -64,7 +68,7 @@ export function getLeagueById(id: string, spec: RequestHandlingSpec<void>): Thun
   })
 }
 
-export function joinLeague(id: string, spec: RequestHandlingSpec<void>): ThunkAction {
+export function joinLeague(id: ClientLeagueId, spec: RequestHandlingSpec<void>): ThunkAction {
   return abortableThunk(spec, async dispatch => {
     const result = await fetchJson<JoinLeagueResponse>(apiUrl`leagues/${id}/join/`, {
       method: 'POST',
@@ -73,6 +77,25 @@ export function joinLeague(id: string, spec: RequestHandlingSpec<void>): ThunkAc
 
     dispatch({
       type: '@leagues/join',
+      payload: result,
+    })
+  })
+}
+
+export function getLeagueLeaderboard(
+  id: ClientLeagueId,
+  spec: RequestHandlingSpec<void>,
+): ThunkAction {
+  return abortableThunk(spec, async dispatch => {
+    const result = await fetchJson<GetLeagueLeaderboardResponse>(
+      apiUrl`leagues/${id}/leaderboard/`,
+      {
+        signal: spec.signal,
+      },
+    )
+
+    dispatch({
+      type: '@leagues/getLeaderboard',
       payload: result,
     })
   })

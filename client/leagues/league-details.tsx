@@ -1,32 +1,44 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { TableVirtuoso } from 'react-virtuoso'
 import slug from 'slug'
 import styled from 'styled-components'
 import { ReadonlyDeep } from 'type-fest'
 import { Link, useRoute } from 'wouter'
+import { assertUnreachable } from '../../common/assert-unreachable'
 import {
   ClientLeagueId,
   ClientLeagueUserJson,
   LeagueErrorCode,
+  LeagueJson,
   makeClientLeagueId,
 } from '../../common/leagues'
 import { matchmakingTypeToLabel } from '../../common/matchmaking'
 import { RaceChar, raceCharToLabel } from '../../common/races'
-import { SbUserId } from '../../common/users/sb-user'
 import { useSelfUser } from '../auth/state-hooks'
 import { ConnectedAvatar } from '../avatars/avatar'
 import { longTimestamp, monthDay, narrowDuration } from '../i18n/date-formats'
 import logger from '../logging/logger'
 import { Markdown } from '../markdown/markdown'
 import { RaisedButton } from '../material/button'
+import { useScrollIndicatorState } from '../material/scroll-indicator'
+import { shadow4dp } from '../material/shadows'
 import { TabItem, Tabs } from '../material/tabs'
 import { Tooltip } from '../material/tooltip'
 import { ExternalLink } from '../navigation/external-link'
+import { replace } from '../navigation/routing'
 import { isFetchError } from '../network/fetch-errors'
 import { LoadingDotsArea } from '../progress/dots'
 import { useAppDispatch, useAppSelector } from '../redux-hooks'
 import { openSnackbar } from '../snackbars/action-creators'
-import { useStableCallback } from '../state-hooks'
-import { colorDividers, colorError, colorTextSecondary, getRaceColor } from '../styles/colors'
+import { useForceUpdate, useStableCallback } from '../state-hooks'
+import {
+  background800,
+  colorDividers,
+  colorError,
+  colorTextFaint,
+  colorTextSecondary,
+  getRaceColor,
+} from '../styles/colors'
 import {
   caption,
   headline3,
@@ -37,40 +49,77 @@ import {
   subtitle2,
 } from '../styles/typography'
 import { ConnectedUsername } from '../users/connected-username'
-import { correctSlugForLeague, getLeagueById, joinLeague } from './action-creators'
+import {
+  correctSlugForLeague,
+  getLeagueById,
+  getLeagueLeaderboard,
+  joinLeague,
+  navigateToLeague,
+} from './action-creators'
+import { ALL_DETAILS_SUB_PAGES, DetailsSubPage } from './details-sub-page'
 import { LeagueImage, LeaguePlaceholderImage } from './league-image'
 
 const PageRoot = styled.div`
-  padding: 12px 24px;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0 24px 12px;
+
+  overflow-x: hidden;
+  overflow-y: auto;
 `
 
 export function LeagueDetailsPage() {
-  const [match, params] = useRoute('/leagues/:id/:slugStr?')
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const forceUpdate = useForceUpdate()
+  const setContainerRef = useCallback(
+    (ref: HTMLDivElement | null) => {
+      if (containerRef.current !== ref) {
+        containerRef.current = ref
+        if (ref !== null) {
+          forceUpdate()
+        }
+      }
+    },
+    [forceUpdate],
+  )
+
+  const [match, params] = useRoute('/leagues/:id/:slugStr?/:subPage?')
   const { id, slugStr } = params ?? {}
   const leagueName = useAppSelector(s =>
     id ? s.leagues.byId.get(makeClientLeagueId(id))?.name : undefined,
   )
 
+  const subPage =
+    params?.subPage && ALL_DETAILS_SUB_PAGES.includes(params.subPage as DetailsSubPage)
+      ? (params.subPage as DetailsSubPage)
+      : undefined
+
   useEffect(() => {
     if (match && leagueName && slug(leagueName) !== slugStr) {
-      correctSlugForLeague(id!, leagueName)
+      correctSlugForLeague(makeClientLeagueId(id!), leagueName, subPage)
     }
-  }, [match, id, slugStr, leagueName])
+  }, [match, id, slugStr, leagueName, subPage])
 
   if (!match) {
-    logger.error('Route not matched but page was rendered')
     return null
   }
 
   return (
-    <PageRoot>
-      <LeagueDetails id={makeClientLeagueId(params.id)} />
+    <PageRoot ref={setContainerRef}>
+      <LeagueDetails
+        id={makeClientLeagueId(params.id)}
+        subPage={subPage}
+        container={containerRef.current}
+      />
     </PageRoot>
   )
 }
 
 const DetailsRoot = styled.div`
   max-width: 704px;
+  height: 100%;
+  padding-top: 12px;
 
   display: flex;
   flex-direction: column;
@@ -143,9 +192,11 @@ const ErrorText = styled.div`
 
 export interface LeagueDetailsProps {
   id: ClientLeagueId
+  subPage?: DetailsSubPage
+  container: HTMLElement | null
 }
 
-export function LeagueDetails({ id }: LeagueDetailsProps) {
+export function LeagueDetails({ id, subPage, container }: LeagueDetailsProps) {
   const dispatch = useAppDispatch()
   const [isFetching, setIsFetching] = useState(false)
   const [error, setError] = useState<Error>()
@@ -153,8 +204,6 @@ export function LeagueDetails({ id }: LeagueDetailsProps) {
   const isLoggedIn = useSelfUser().id !== -1
   const league = useAppSelector(s => s.leagues.byId.get(id))
   const selfLeagueUser = useAppSelector(s => s.leagues.selfLeagues.get(id))
-  const topTen = useAppSelector(s => s.leagues.topTen.get(id))
-  const topTenUsers = useAppSelector(s => s.leagues.topTenUsers.get(id))
 
   const [isJoining, setIsJoining] = useState(false)
   const onJoinClick = useStableCallback(() => {
@@ -187,6 +236,10 @@ export function LeagueDetails({ id }: LeagueDetailsProps) {
     )
   })
 
+  const onTabChange = useStableCallback((subPage: DetailsSubPage) => {
+    navigateToLeague(id, league, subPage, replace)
+  })
+
   useEffect(() => {
     const controller = new AbortController()
     const signal = controller.signal
@@ -204,7 +257,7 @@ export function LeagueDetails({ id }: LeagueDetailsProps) {
         onError(err) {
           setIsFetching(false)
           setError(err)
-          logger.error(`Error loading leagues list: ${err.stack ?? err}`)
+          logger.error(`Error loading league details: ${err.stack ?? err}`)
         },
       }),
     )
@@ -236,33 +289,35 @@ export function LeagueDetails({ id }: LeagueDetailsProps) {
     return <LoadingDotsArea />
   }
 
-  // TODO(tec27): Handle cases where year differs to smartly show that info
-  const dateText = `${monthDay.format(league.startAt)} to ${monthDay.format(league.endAt)}`
-  const dateTooltip = `${longTimestamp.format(league.startAt)} to ${longTimestamp.format(
-    league.endAt,
-  )}`
-
   const curTime = Date.now()
   const isJoinable = isLoggedIn && !selfLeagueUser && league.endAt > curTime
+  const isRunningOrEnded = league.startAt <= curTime
+
+  const activeTab = subPage ?? DetailsSubPage.Info
+
+  let content: React.ReactNode
+  switch (activeTab) {
+    case DetailsSubPage.Info:
+      content = <LeagueDetailsInfo league={league} />
+      break
+    case DetailsSubPage.Leaderboard:
+      content = <Leaderboard league={league} container={container} />
+      break
+    default:
+      assertUnreachable(activeTab)
+  }
 
   return (
     <DetailsRoot>
-      <div>
-        <Title>{league.name}</Title>
-        <SummaryRow>
-          <FormatAndDate>
-            {matchmakingTypeToLabel(league.matchmakingType)} ·{' '}
-            <DateTooltip text={dateTooltip} position={'right'}>
-              {dateText}
-            </DateTooltip>
-          </FormatAndDate>
-          {league.link ? <LeagueLink href={league.link}>{league.link}</LeagueLink> : undefined}
-        </SummaryRow>
-      </div>
+      <LeagueDetailsHeader league={league} />
       <TabsAndJoin>
-        <Tabs activeTab='info' onChange={() => {}}>
-          <TabItem value='info' text='Info' />
-          <TabItem value='leaderboard' text='Leaderboard' />
+        <Tabs activeTab={activeTab} onChange={onTabChange}>
+          <TabItem value={DetailsSubPage.Info} text='Info' />
+          {isRunningOrEnded ? (
+            <TabItem value={DetailsSubPage.Leaderboard} text='Leaderboard' />
+          ) : (
+            <></>
+          )}
         </Tabs>
         {(isJoinable || selfLeagueUser) && (!isFetching || selfLeagueUser) ? (
           <RaisedButton
@@ -272,6 +327,45 @@ export function LeagueDetails({ id }: LeagueDetailsProps) {
           />
         ) : undefined}
       </TabsAndJoin>
+      {content}
+    </DetailsRoot>
+  )
+}
+
+export interface LeagueDetailsHeaderProps {
+  league: ReadonlyDeep<LeagueJson>
+}
+
+export function LeagueDetailsHeader({ league }: LeagueDetailsHeaderProps) {
+  // TODO(tec27): Handle cases where year differs to smartly show that info
+  const dateText = `${monthDay.format(league.startAt)} to ${monthDay.format(league.endAt)}`
+  const dateTooltip = `${longTimestamp.format(league.startAt)} to ${longTimestamp.format(
+    league.endAt,
+  )}`
+
+  return (
+    <div>
+      <Title>{league.name}</Title>
+      <SummaryRow>
+        <FormatAndDate>
+          {matchmakingTypeToLabel(league.matchmakingType)} ·{' '}
+          <DateTooltip text={dateTooltip} position={'right'}>
+            {dateText}
+          </DateTooltip>
+        </FormatAndDate>
+        {league.link ? <LeagueLink href={league.link}>{league.link}</LeagueLink> : undefined}
+      </SummaryRow>
+    </div>
+  )
+}
+
+export interface LeagueDetailsInfoProps {
+  league: ReadonlyDeep<LeagueJson>
+}
+
+export function LeagueDetailsInfo({ league }: LeagueDetailsInfoProps) {
+  return (
+    <>
       {league.imagePath ? <LeagueImage src={league.imagePath} /> : <LeaguePlaceholderImage />}
       <InfoSection>
         <InfoSectionHeader>About</InfoSectionHeader>
@@ -285,36 +379,49 @@ export function LeagueDetails({ id }: LeagueDetailsProps) {
           </div>
         </InfoSection>
       ) : undefined}
-      {topTen?.length && topTenUsers ? (
-        <InfoSection>
-          <InfoSectionHeader>Top 10</InfoSectionHeader>
-          <Leaderboard leaderboard={topTen} leagueUsers={topTenUsers} curTime={curTime} />
-        </InfoSection>
-      ) : undefined}
-    </DetailsRoot>
+    </>
   )
 }
 
-const LeaderboardRoot = styled.div`
-  padding: 0 0 16px;
+const TableBody = React.forwardRef((props, ref: React.ForwardedRef<any>) => (
+  <div ref={ref} {...props} />
+))
 
+const TableRow = styled.div``
+
+const FillerRow = styled.div.attrs<{ height: number }>(props => ({
+  style: { height: `${props.height}px` },
+}))<{ height: number }>``
+
+const LeaderboardRoot = styled.div`
   border: 1px solid ${colorDividers};
   border-radius: 2px;
 `
 
-const LeaderboardHeader = styled.div`
+const HEADER_STUCK_CLASS = 'sb-leaderboard-table-sticky-header'
+
+const LeaderboardHeaderRow = styled.div`
   ${overline};
   width: 100%;
   height: 48px;
+  position: sticky !important;
+  top: 0;
   --sb-leaderboard-row-height: 48px;
 
   display: flex;
   align-items: center;
 
+  background-color: ${background800};
   color: ${colorTextSecondary};
+  contain: content;
+
+  .${HEADER_STUCK_CLASS} & {
+    ${shadow4dp};
+    border-bottom: 1px solid ${colorDividers};
+  }
 `
 
-const LeaderboardRow = styled.div`
+const LeaderboardRowRoot = styled.div`
   ${subtitle1};
   position: relative;
   width: 100%;
@@ -382,59 +489,151 @@ const LastPlayedCell = styled(NumericCell)`
   padding: 0 16px 0 32px;
 `
 
+const LeaderboardError = styled(ErrorText)`
+  padding: 16px;
+  text-align: center;
+`
+
+const EmptyText = styled.div`
+  ${subtitle1};
+  padding: 16px;
+
+  color: ${colorTextFaint};
+  text-align: center;
+`
+
+const FooterSpacing = styled.div`
+  height: 12px;
+`
+
+function LeaderboardAndMargin({ children }: { children?: React.ReactNode }) {
+  return (
+    <>
+      <LeaderboardRoot>{children}</LeaderboardRoot>
+      <FooterSpacing />
+    </>
+  )
+}
+
+function LeaderboardHeader() {
+  return (
+    <>
+      <RankCell>Rank</RankCell>
+      <PlayerCell>Player</PlayerCell>
+      <PointsCell>Points</PointsCell>
+      <WinLossCell>Win/loss</WinLossCell>
+      <LastPlayedCell>Last played</LastPlayedCell>
+    </>
+  )
+}
+
 interface LeaderboardEntry {
   rank: number
   leagueUser: ReadonlyDeep<ClientLeagueUserJson>
 }
 
 function Leaderboard({
-  leaderboard,
-  leagueUsers,
-  curTime,
+  league,
+  container,
 }: {
-  leaderboard: ReadonlyArray<SbUserId>
-  leagueUsers: ReadonlyDeep<Map<SbUserId, ClientLeagueUserJson>>
-  curTime: number
+  league: ReadonlyDeep<LeagueJson>
+  container: HTMLElement | null
 }) {
-  const leaderboardEntries = useMemo(() => {
+  const dispatch = useAppDispatch()
+  const leaderboard = useAppSelector(s => s.leagues.leaderboard.get(league.id))
+  const leaderboardUsers = useAppSelector(s => s.leagues.leaderboardUsers.get(league.id))
+
+  const [error, setError] = useState<Error | undefined>(undefined)
+
+  const id = league.id
+  useEffect(() => {
+    const controller = new AbortController()
+    const signal = controller.signal
+
+    setError(undefined)
+
+    dispatch(
+      getLeagueLeaderboard(id, {
+        signal,
+        onSuccess(res) {
+          setError(undefined)
+        },
+        onError(err) {
+          setError(err)
+          logger.error(`Error loading leaderboard: ${err.stack ?? err}`)
+        },
+      }),
+    )
+
+    return () => controller.abort()
+  }, [id, dispatch])
+
+  const [leaderboardEntries, curTime] = useMemo(() => {
     const result: LeaderboardEntry[] = []
+    if (!leaderboard || !leaderboardUsers) {
+      return [result, Date.now()]
+    }
+
     let curRank = 1
 
     for (const userId of leaderboard) {
-      const leagueUser = leagueUsers.get(userId)!
+      const leagueUser = leaderboardUsers.get(userId)!
       const rank =
         result.length && result.at(-1)!.leagueUser.points > leagueUser.points ? ++curRank : curRank
       result.push({ rank, leagueUser })
     }
 
-    return result
-  }, [leaderboard, leagueUsers])
+    return [result, Date.now()]
+  }, [leaderboard, leaderboardUsers])
+
+  const [isHeaderUnstuck, , topHeaderNode, bottomHeaderNode] = useScrollIndicatorState({
+    refreshToken: leaderboard,
+  })
+
+  const renderRow = useStableCallback((_index: number, entry: LeaderboardEntry) => (
+    <LeaderboardRow entry={entry} curTime={curTime} />
+  ))
 
   return (
-    <LeaderboardRoot>
-      <LeaderboardHeader>
-        <RankCell>Rank</RankCell>
-        <PlayerCell>Player</PlayerCell>
-        <PointsCell>Points</PointsCell>
-        <WinLossCell>Win/loss</WinLossCell>
-        <LastPlayedCell>Last played</LastPlayedCell>
-      </LeaderboardHeader>
-      {leaderboardEntries.map(({ rank, leagueUser }) => (
-        <LeaderboardRow key={leagueUser.userId}>
-          <RankCell>{rank}</RankCell>
-          <LeaderboardPlayer player={leagueUser} />
-          <PointsCell>{Math.round(leagueUser.points)}</PointsCell>
-          <WinLossCell>
-            {leagueUser.wins} &ndash; {leagueUser.losses}
-          </WinLossCell>
-          <LastPlayedCell>
-            {leagueUser.lastPlayedDate
-              ? narrowDuration.format(leagueUser.lastPlayedDate, curTime)
-              : undefined}
-          </LastPlayedCell>
-        </LeaderboardRow>
-      ))}
-    </LeaderboardRoot>
+    <>
+      {error ? (
+        <LeaderboardError>
+          There was a problem retrieving the leaderboard:{' '}
+          {isFetchError(error) ? error.statusText : error.message}
+        </LeaderboardError>
+      ) : undefined}
+      {topHeaderNode}
+      {leaderboard ? (
+        <>
+          {container && leaderboardEntries.length ? (
+            <TableVirtuoso
+              className={isHeaderUnstuck ? '' : HEADER_STUCK_CLASS}
+              customScrollParent={container}
+              fixedHeaderContent={LeaderboardHeader}
+              components={{
+                Table: LeaderboardAndMargin,
+                // NOTE(tec27): virtuoso expects a table section here, even though it doesn't
+                // *really* care. Because of that though, the typings clash with what is
+                // acceptable for `ref` props, so we cast to `any` to get past that error
+                TableHead: LeaderboardHeaderRow as any,
+                TableBody,
+                TableRow,
+                FillerRow,
+              }}
+              data={leaderboardEntries}
+              itemContent={renderRow}
+            />
+          ) : (
+            <EmptyText>No matching players.</EmptyText>
+          )}
+        </>
+      ) : (
+        <LeaderboardRoot>
+          <LoadingDotsArea />
+        </LeaderboardRoot>
+      )}
+      {bottomHeaderNode}
+    </>
   )
 }
 
@@ -461,23 +660,39 @@ const PlayerRace = styled.div<{ $race: RaceChar }>`
   color: ${props => getRaceColor(props.$race)};
 `
 
-function LeaderboardPlayer({ player }: { player: ReadonlyDeep<ClientLeagueUserJson> }) {
-  const raceStats: Array<[number, RaceChar]> = [
-    [player.pWins + player.pLosses, 'p'],
-    [player.tWins + player.tLosses, 't'],
-    [player.zWins + player.zLosses, 'z'],
-    [player.rWins + player.rLosses, 'r'],
-  ]
-  raceStats.sort((a, b) => b[0] - a[0])
-  const mostPlayedRace = raceStats[0][1]
+const LeaderboardRow = React.memo(
+  ({ entry: { rank, leagueUser }, curTime }: { entry: LeaderboardEntry; curTime: number }) => {
+    const raceStats: Array<[number, RaceChar]> = [
+      [leagueUser.pWins + leagueUser.pLosses, 'p'],
+      [leagueUser.tWins + leagueUser.tLosses, 't'],
+      [leagueUser.zWins + leagueUser.zLosses, 'z'],
+      [leagueUser.rWins + leagueUser.rLosses, 'r'],
+    ]
+    raceStats.sort((a, b) => b[0] - a[0])
+    const mostPlayedRace = raceStats[0][1]
 
-  return (
-    <PlayerCell>
-      <StyledAvatar userId={player.userId} />
-      <PlayerNameAndRace>
-        <PlayerName userId={player.userId} />
-        <PlayerRace $race={mostPlayedRace}>{raceCharToLabel(mostPlayedRace)}</PlayerRace>
-      </PlayerNameAndRace>
-    </PlayerCell>
-  )
-}
+    return (
+      <LeaderboardRowRoot key={leagueUser.userId}>
+        <RankCell>{rank}</RankCell>
+        <PlayerCell>
+          <StyledAvatar userId={leagueUser.userId} />
+          <PlayerNameAndRace>
+            <PlayerName userId={leagueUser.userId} />
+            <PlayerRace $race={mostPlayedRace}>{raceCharToLabel(mostPlayedRace)}</PlayerRace>
+          </PlayerNameAndRace>
+        </PlayerCell>
+        <PointsCell>{Math.round(leagueUser.points)}</PointsCell>
+        <WinLossCell>
+          {leagueUser.wins} &ndash; {leagueUser.losses}
+        </WinLossCell>
+        <LastPlayedCell>
+          <Tooltip text={longTimestamp.format(leagueUser.lastPlayedDate)}>
+            {leagueUser.lastPlayedDate
+              ? narrowDuration.format(leagueUser.lastPlayedDate, curTime)
+              : undefined}
+          </Tooltip>
+        </LastPlayedCell>
+      </LeaderboardRowRoot>
+    )
+  },
+)

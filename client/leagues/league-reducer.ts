@@ -12,8 +12,10 @@ export interface LeagueState {
 
   selfLeagues: Map<ClientLeagueId, ClientLeagueUserJson>
 
-  topTen: Map<ClientLeagueId, SbUserId[]>
-  topTenUsers: Map<ClientLeagueId, Map<SbUserId, ClientLeagueUserJson>>
+  // TODO(tec27): We need to evict old entries from these at some point, or navigating through a ton
+  // of leaderboards could leak memory
+  leaderboard: Map<ClientLeagueId, SbUserId[]>
+  leaderboardUsers: Map<ClientLeagueId, Map<SbUserId, ClientLeagueUserJson>>
 }
 
 const DEFAULT_STATE: ReadonlyDeep<LeagueState> = {
@@ -24,8 +26,8 @@ const DEFAULT_STATE: ReadonlyDeep<LeagueState> = {
 
   selfLeagues: new Map(),
 
-  topTen: new Map(),
-  topTenUsers: new Map(),
+  leaderboard: new Map(),
+  leaderboardUsers: new Map(),
 }
 
 export default immerKeyedReducer(DEFAULT_STATE, {
@@ -47,7 +49,7 @@ export default immerKeyedReducer(DEFAULT_STATE, {
     state.selfLeagues = new Map(selfLeagues.map(l => [l.leagueId, l]))
   },
 
-  ['@leagues/get'](state, { payload: { league, selfLeagueUser, topTen, topTenLeagueUsers } }) {
+  ['@leagues/get'](state, { payload: { league, selfLeagueUser } }) {
     state.byId.set(league.id, league)
 
     if (selfLeagueUser) {
@@ -55,14 +57,17 @@ export default immerKeyedReducer(DEFAULT_STATE, {
     } else {
       state.selfLeagues.delete(league.id)
     }
-
-    state.topTen.set(league.id, topTen)
-    state.topTenUsers.set(league.id, new Map(topTenLeagueUsers.map(l => [l.userId, l])))
   },
 
   ['@leagues/join'](state, { payload: { league, selfLeagueUser } }) {
     state.byId.set(league.id, league)
     state.selfLeagues.set(league.id, selfLeagueUser)
+  },
+
+  ['@leagues/getLeaderboard'](state, { payload: { league, leaderboard, leagueUsers } }) {
+    state.byId.set(league.id, league)
+    state.leaderboard.set(league.id, leaderboard)
+    state.leaderboardUsers.set(league.id, new Map(leagueUsers.map(l => [l.userId, l])))
   },
 
   [NETWORK_SITE_DISCONNECTED as any]() {

@@ -145,12 +145,16 @@ export interface GetLeaguesListResponse {
 export interface GetLeagueByIdResponse {
   league: LeagueJson
   selfLeagueUser?: ClientLeagueUserJson
-  topTen: SbUserId[]
-  topTenLeagueUsers: ClientLeagueUserJson[]
-  users: SbUser[]
 }
 
 export interface JoinLeagueResponse {
   league: LeagueJson
   selfLeagueUser: ClientLeagueUserJson
+}
+
+export interface GetLeagueLeaderboardResponse {
+  league: LeagueJson
+  leaderboard: SbUserId[]
+  leagueUsers: ClientLeagueUserJson[]
+  users: SbUser[]
 }
