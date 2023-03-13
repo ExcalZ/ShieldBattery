@@ -1,5 +1,5 @@
 import { LeagueId } from '../../../common/leagues'
-import { SbUserId } from '../../../common/users/sb-user'
+import { makeSbUserId, SbUserId } from '../../../common/users/sb-user'
 import { Redis } from '../redis'
 import { LeagueUser } from './league-models'
 
@@ -33,5 +33,5 @@ export async function getLeaderboard(
 ): Promise<SbUserId[]> {
   const key = leaderboardKey(leagueId)
   const entries = await redis.zrange(key, 0, (limit ?? 0) - 1, 'REV')
-  return entries.map(entry => JSON.parse(entry))
+  return entries.map(entry => makeSbUserId(Number(entry)))
 }
