@@ -1,7 +1,8 @@
 import sql from 'sql-template-strings'
 import { assertUnreachable } from '../../../common/assert-unreachable'
+import { appendToMultimap } from '../../../common/data-structures/maps'
 import { League, LeagueId } from '../../../common/leagues'
-import { MatchmakingResult } from '../../../common/matchmaking'
+import { MatchmakingResult, MatchmakingType } from '../../../common/matchmaking'
 import { RaceStats } from '../../../common/races'
 import { SbUserId } from '../../../common/users/sb-user'
 import db, { DbClient } from '../db'
@@ -286,6 +287,24 @@ export async function getLeagueUser(
   }
 }
 
+export async function getManyLeagueUsers(
+  leagueId: LeagueId,
+  userIds: ReadonlyArray<SbUserId>,
+  withClient?: DbClient,
+): Promise<LeagueUser[]> {
+  const { client, done } = await db(withClient)
+  try {
+    const result = await client.query<DbLeagueUser>(sql`
+      SELECT * FROM league_users
+      WHERE league_id = ${leagueId} AND user_id = ANY(${userIds})
+    `)
+
+    return result.rows.map(convertLeagueUserFromDb)
+  } finally {
+    done()
+  }
+}
+
 export async function getAllLeaguesForUser(
   userId: SbUserId,
   withClient?: DbClient,
@@ -317,6 +336,67 @@ export async function joinLeagueForUser(
     `)
 
     return convertLeagueUserFromDb(result.rows[0])
+  } finally {
+    done()
+  }
+}
+
+export async function updateLeagueUser(leagueUser: LeagueUser, client: DbClient) {
+  await client.query(sql`
+    UPDATE league_users
+    SET
+      last_played_date = ${leagueUser.lastPlayedDate},
+      points = ${leagueUser.points},
+      points_converged = ${leagueUser.pointsConverged},
+      wins = ${leagueUser.wins},
+      losses = ${leagueUser.losses},
+      p_wins = ${leagueUser.pWins},
+      p_losses = ${leagueUser.pLosses},
+      t_wins = ${leagueUser.tWins},
+      t_losses = ${leagueUser.tLosses},
+      z_wins = ${leagueUser.zWins},
+      z_losses = ${leagueUser.zLosses},
+      r_wins = ${leagueUser.rWins},
+      r_losses = ${leagueUser.rLosses},
+      r_p_wins = ${leagueUser.rPWins},
+      r_p_losses = ${leagueUser.rPLosses},
+      r_t_wins = ${leagueUser.rTWins},
+      r_t_losses = ${leagueUser.rTLosses},
+      r_z_wins = ${leagueUser.rZWins},
+      r_z_losses = ${leagueUser.rZLosses}
+    WHERE league_id = ${leagueUser.leagueId} AND user_id = ${leagueUser.userId}
+  `)
+}
+
+/**
+ * Returns a Map of `userId` -> `LeagueUser`s for all specified users where the leagues are of
+ * `matchmakingType` and running as of `atDate`.
+ */
+export async function getActiveLeaguesForUsers(
+  userIds: ReadonlyArray<SbUserId>,
+  matchmakingType: MatchmakingType,
+  atDate: Date,
+  withClient?: DbClient,
+): Promise<Map<SbUserId, LeagueUser[]>> {
+  const { client, done } = await db(withClient)
+  try {
+    const result = await client.query(sql`
+      SELECT lu.*
+      FROM league_users lu
+      JOIN leagues l ON l.id = lu.league_id
+      WHERE lu.user_id = ANY(${userIds})
+        AND l.end_at > ${atDate}
+        AND l.start_at <= ${atDate}
+        AND l.matchmaking_type = ${matchmakingType}
+    `)
+
+    const leaguesByUser: Map<SbUserId, LeagueUser[]> = new Map()
+    for (const row of result.rows) {
+      const leagueUser = convertLeagueUserFromDb(row)
+      appendToMultimap(leaguesByUser, leagueUser.userId, leagueUser)
+    }
+
+    return leaguesByUser
   } finally {
     done()
   }

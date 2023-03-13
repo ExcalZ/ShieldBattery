@@ -31,9 +31,12 @@ import { handleMultipartFiles } from '../file-upload/handle-multipart-files'
 import { httpApi, httpBeforeAll } from '../http/http-api'
 import { httpBefore, httpGet, httpPost } from '../http/route-decorators'
 import { checkAllPermissions } from '../permissions/check-permissions'
+import { Redis } from '../redis'
 import ensureLoggedIn from '../session/ensure-logged-in'
+import { findUsersById } from '../users/user-model'
 import { joiPrettyId } from '../validation/joi-pretty-id'
 import { validateRequest } from '../validation/joi-validator'
+import { getLeaderboard } from './leaderboard'
 import {
   createLeague,
   getAllLeagues,
@@ -42,6 +45,7 @@ import {
   getFutureLeagues,
   getLeague,
   getLeagueUser,
+  getManyLeagueUsers,
   getPastLeagues,
   joinLeagueForUser,
   LeagueUser,
@@ -70,6 +74,8 @@ const convertLeagueApiErrors = makeErrorConverterMiddleware(err => {
 @httpApi('/leagues/')
 @httpBeforeAll(convertLeagueApiErrors)
 export class LeagueApi {
+  constructor(private redis: Redis) {}
+
   @httpGet('/')
   async getLeagues(ctx: RouterContext): Promise<GetLeaguesListResponse> {
     const now = new Date()
@@ -108,7 +114,10 @@ export class LeagueApi {
   async getLeagueById(ctx: RouterContext): Promise<GetLeagueByIdResponse> {
     const leagueId = this.leagueIdFromUrl(ctx)
     const now = new Date()
-    const league = await getLeague(leagueId, now)
+    const [league, topTenUsers] = await Promise.all([
+      getLeague(leagueId, now),
+      getLeaderboard(this.redis, leagueId, 10),
+    ])
 
     if (!league) {
       throw new LeagueApiError(LeagueErrorCode.NotFound, 'league not found')
@@ -121,11 +130,21 @@ export class LeagueApi {
 
     const leagueJson = toLeagueJson(league)
 
+    const [users, topTen] = await Promise.all([
+      topTenUsers.length > 0 ? findUsersById(topTenUsers) : [],
+      topTenUsers.length > 0 ? getManyLeagueUsers(leagueId, topTenUsers) : [],
+    ])
+
     return {
       league: leagueJson,
       selfLeagueUser: selfLeagueUser
         ? toClientLeagueUserJson({ ...selfLeagueUser, leagueId: leagueJson.id })
         : undefined,
+      topTen: topTenUsers,
+      topTenLeagueUsers: topTen.map(lu =>
+        toClientLeagueUserJson({ ...lu, leagueId: leagueJson.id }),
+      ),
+      users,
     }
   }
 

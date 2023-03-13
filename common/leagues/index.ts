@@ -3,7 +3,7 @@ import { Jsonify } from '../json'
 import { MatchmakingType } from '../matchmaking'
 import { decodePrettyId, encodePrettyId } from '../pretty-id'
 import { RaceStats } from '../races'
-import { SbUserId } from '../users/sb-user'
+import { SbUser, SbUserId } from '../users/sb-user'
 
 export const LEAGUE_IMAGE_WIDTH = 704
 export const LEAGUE_IMAGE_HEIGHT = 288
@@ -145,6 +145,9 @@ export interface GetLeaguesListResponse {
 export interface GetLeagueByIdResponse {
   league: LeagueJson
   selfLeagueUser?: ClientLeagueUserJson
+  topTen: SbUserId[]
+  topTenLeagueUsers: ClientLeagueUserJson[]
+  users: SbUser[]
 }
 
 export interface JoinLeagueResponse {
