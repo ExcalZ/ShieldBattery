@@ -1,3 +1,4 @@
+use std::mem;
 use std::ptr::{self, addr_of_mut, null_mut};
 
 use bytemuck::{Pod, Zeroable};
@@ -50,6 +51,9 @@ quick_error! {
     pub enum DrawError {
         OutOfDrawCommands {
             display("Ran out of draw commands")
+        }
+        OutOfSubCommandBuffer {
+            display("Ran out of subcommand buffer")
         }
         InvalidTexture(id: TextureId) {
             display("Invalid texture ID {:?}", id)
@@ -149,11 +153,10 @@ pub unsafe fn add_overlays(
     // 0x15 is above F10 menu already
     let layer = 0x1a;
     for primitive in overlay_out.primitives.into_iter() {
-        // Primitive also has clip rect, how to translate it to BW DrawCommand?
         match primitive.primitive {
             epaint::Primitive::Mesh(mesh) => {
                 if let Err(e) =
-                    draw_egui_mesh(layer, state, mesh, bw, render_target)
+                    draw_egui_mesh(layer, state, mesh, bw, render_target, &primitive.clip_rect)
                 {
                     warn_once!("Failed to draw mesh: {e}");
                 }
@@ -203,6 +206,7 @@ unsafe fn draw_egui_mesh(
     mesh: epaint::Mesh,
     bw: &BwVars,
     render_target: &RenderTarget,
+    clip_rect: &egui::Rect,
 ) -> Result<(), DrawError> {
     let texture = state.textures.get(&mesh.texture_id)
         .ok_or_else(|| DrawError::InvalidTexture(mesh.texture_id))?;
@@ -214,6 +218,7 @@ unsafe fn draw_egui_mesh(
             texture,
             bw,
             render_target,
+            clip_rect,
         )
     } else {
         for mesh in mesh.split_to_u16() {
@@ -224,6 +229,7 @@ unsafe fn draw_egui_mesh(
                 texture,
                 bw,
                 render_target,
+                clip_rect,
             )?;
         }
         Ok(())
@@ -237,6 +243,7 @@ unsafe fn draw_egui_mesh_main<I: IndexSize>(
     texture: &OwnedBwTexture,
     bw: &BwVars,
     render_target: &RenderTarget,
+    clip_rect: &egui::Rect,
 ) -> Result<(), DrawError> {
     // Bw requires there to be some `quad_count`, and
     // vertex count being `4 * quad_count` and
@@ -256,6 +263,7 @@ unsafe fn draw_egui_mesh_main<I: IndexSize>(
     index_alloc.set_map(indices.len(), |i| [indices[i].to_u16()]);
     index_alloc.zero_after(indices.len());
 
+    let revert_pos = (*bw.commands).draw_command_count;
     let draw_command = new_draw_command(bw.commands, layer).ok_or(DrawError::OutOfDrawCommands)?;
     *draw_command = scr::DrawCommand {
         render_target_id: render_target.id,
@@ -282,6 +290,66 @@ unsafe fn draw_egui_mesh_main<I: IndexSize>(
     (*draw_command).shader_constants[0x2] = 1.0;
     (*draw_command).shader_constants[0x3] = 1.0;
     set_render_target_wh_recip(draw_command, render_target);
+    // egui rect unit is points (Render target w/h) and l/t/r/b,
+    // BW scissor rect is in 0.0 .. 1.0 range and x/y/w/h with origin in bottom left.
+    let bw_clip_rect = [
+        clip_rect.left() * render_target.w_recip,
+        1.0 - clip_rect.bottom() * render_target.h_recip,
+        clip_rect.width() * render_target.w_recip,
+        clip_rect.height() * render_target.h_recip,
+    ];
+    if bw_clip_rect != [0.0f32, 0.0, 1.0, 1.0] {
+        let result = (|| {
+            add_draw_subcommand(
+                bw.commands,
+                addr_of_mut!((*draw_command).subcommands_pre),
+                1,
+                bw_clip_rect,
+            )?;
+            // Some renderer backends seem to need explicit scissor reset (Type 2 subcommand),
+            // though prism seems to just implicitly reset it after every subcommand
+            // and ignore this, but adding this to be consistent with how scissor is normally used
+            add_draw_subcommand(
+                bw.commands,
+                addr_of_mut!((*draw_command).subcommands_post),
+                2,
+                (),
+            )
+        })();
+        if result.is_err() {
+            pop_draw_commands(bw.commands, revert_pos);
+            return result;
+        }
+    }
+    Ok(())
+}
+
+unsafe fn add_draw_subcommand<D: Pod>(
+    alloc_buf: *mut scr::DrawCommands,
+    subcommands: *mut scr::DrawSubCommands,
+    id: u32,
+    data: D,
+) -> Result<(), DrawError> {
+    let length = mem::size_of::<scr::DrawSubCommand>() + mem::size_of::<D>();
+    let start_offset = (*alloc_buf).subcommand_buffer_bytes_used;
+    let end_offset = start_offset.checked_add(length as u32)
+        .filter(|&x| x <= (*alloc_buf).subcommand_buffer.len() as u32)
+        .ok_or(DrawError::OutOfSubCommandBuffer)?;
+    (*alloc_buf).subcommand_buffer_bytes_used = end_offset;
+    let command = (*alloc_buf).subcommand_buffer.as_mut_ptr().add(start_offset as usize);
+    (command as *mut scr::DrawSubCommand).write(scr::DrawSubCommand {
+        id,
+        next: null_mut(),
+    });
+    (command.add(mem::size_of::<scr::DrawSubCommand>()) as *mut D).write(data);
+
+    // Insert at end of the single-linked list
+    let mut insert_pos = addr_of_mut!((*subcommands).first);
+    while !(*insert_pos).is_null() {
+        insert_pos = addr_of_mut!((**insert_pos).next);
+    }
+    *insert_pos = command as *mut scr::DrawSubCommand;
+
     Ok(())
 }
 
@@ -312,6 +380,16 @@ unsafe fn new_draw_command(
     });
 
     Some(command)
+}
+
+unsafe fn pop_draw_commands(
+    commands: *mut scr::DrawCommands,
+    pos: u16,
+) {
+    let pop_amount = (*commands).draw_command_count - pos;
+    let draw_sort = addr_of_mut!((*commands).draw_sort_vector) as *mut scr::BwVector;
+    (*draw_sort).length -= pop_amount as usize;
+    (*commands).draw_command_count = pos;
 }
 
 unsafe fn allocate_vertices(

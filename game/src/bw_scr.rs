@@ -262,7 +262,7 @@ pub mod scr {
 
     use super::thiscall::Thiscall;
 
-    pub use bw_dat::structs::scr::{DrawCommand, DrawCommands, DrawSubCommands};
+    pub use bw_dat::structs::scr::{DrawCommand, DrawCommands, DrawSubCommand, DrawSubCommands};
 
     #[repr(C)]
     pub struct SnpLoadFuncs {

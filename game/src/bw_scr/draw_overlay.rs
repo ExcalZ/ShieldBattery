@@ -108,9 +108,6 @@ impl OverlayState {
                         .show(ui, |ui| {
                             ctx.settings_ui(ui);
                         });
-                    // Add space since the one line of settings ui text can overflow out
-                    // of the scroll area.
-                    ui.add_space(20.0);
                     let msg = format!("Windows mouse {}, {},\n    egui {}, {}",
                         self.mouse_debug.0,
                         self.mouse_debug.1,

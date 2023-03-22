@@ -128,7 +128,7 @@ checksum = "c1ad822118d20d2c234f427000d5acc36eabe1e29a348c89b63dd60b13f28e5d"
 [[package]]
 name = "bw_dat"
 version = "0.1.0"
-source = "git+https://github.com/neivv/aise.git?rev=fbbdf1d2772db25437dc40c2e07d0ff01c5d4fb9#fbbdf1d2772db25437dc40c2e07d0ff01c5d4fb9"
+source = "git+https://github.com/neivv/aise.git?rev=230d5e3749780eeea7b926373d5cc840db0c5308#230d5e3749780eeea7b926373d5cc840db0c5308"
 dependencies = [
  "bitflags",
  "fxhash",
