@@ -361,7 +361,7 @@ export async function findUsersByName(names: string[]): Promise<Map<string, SbUs
  * Returns the data for all users with the specified IDs. If a user cannot be found it will not
  * be included in the result. The order of the result is not guaranteed.
  */
-export async function findUsersById(ids: SbUserId[]): Promise<SbUser[]> {
+export async function findUsersById(ids: ReadonlyArray<SbUserId>): Promise<SbUser[]> {
   const { client, done } = await db()
   try {
     const result = await client.query<DbUser>(sql`SELECT * FROM users WHERE id = ANY (${ids})`)
