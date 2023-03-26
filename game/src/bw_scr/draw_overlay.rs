@@ -1,10 +1,18 @@
+use std::borrow::Cow;
 use std::mem;
 use std::sync::Arc;
 use std::time::Instant;
 
-use egui::{Align2, Event, Key, PointerButton, Pos2, Rect, Vec2};
+use egui::{
+    Align, Align2, Color32, Event, Layout, Key, PointerButton, Pos2, Rect, Response, Sense, Vec2,
+    Widget,
+};
 use egui::style::{TextStyle};
 use winapi::shared::windef::{HWND, POINT};
+
+use bw_dat::Race;
+
+use crate::bw;
 
 pub struct OverlayState {
     ctx: egui::Context,
@@ -24,6 +32,37 @@ pub struct OverlayState {
 pub struct StepOutput {
     pub textures_delta: egui::TexturesDelta,
     pub primitives: Vec<egui::ClippedPrimitive>,
+}
+
+/// Bw globals used by OverlayState::step
+pub struct BwVars {
+    pub is_replay_or_obs: bool,
+    pub game: bw_dat::Game,
+    pub players: *mut bw::Player,
+    pub main_palette: *mut u8,
+}
+
+trait UiExt {
+    fn add_fixed_width<W: Widget>(&mut self, widget: W, width: f32) -> Response;
+}
+
+impl UiExt for egui::Ui {
+    fn add_fixed_width<W: Widget>(&mut self, widget: W, width: f32) -> Response {
+        let child_rect = self.cursor();
+        let mut child_ui = self.child_ui(child_rect, *self.layout());
+        let mut clip_rect = child_ui.clip_rect();
+        if clip_rect.width() < width {
+            clip_rect.set_width(width);
+            child_ui.set_clip_rect(clip_rect);
+        }
+        let response = child_ui.add(widget);
+        let mut final_child_rect = child_ui.min_rect();
+        final_child_rect.set_width(width);
+        self.allocate_rect(final_child_rect, Sense::hover());
+        // Didn't examine if the response from child_ui has to be tweaked a bit to be correct,
+        // maybe should not just return anything until it is needed.
+        response
+    }
 }
 
 impl OverlayState {
@@ -57,7 +96,7 @@ impl OverlayState {
         }
     }
 
-    pub fn step(&mut self, screen_size: (u32, u32)) -> StepOutput {
+    pub fn step(&mut self, bw: &BwVars, screen_size: (u32, u32)) -> StepOutput {
         self.screen_size = screen_size;
         let pixels_per_point = 1.0;
         let screen_rect = Rect {
@@ -87,55 +126,78 @@ impl OverlayState {
         self.ui_rects.clear();
         let ctx = self.ctx.clone();
         let output = ctx.run(input, |ctx| {
-            let res = egui::Window::new("test window")
-                .anchor(Align2::RIGHT_TOP, Vec2::ZERO)
-                .show(ctx, |ui| {
-                    ui.label("Test test");
-                    ui.label("More test");
-                    ui.label("More test 1");
-                    ui.label("More test 2");
-                    ui.label("More test 3");
-                    ui.label("More test 4");
-                    ui.label("More test 5555555555555555555");
-                    ui.label(egui::RichText::new("Size 30 text").size(30.0));
-                });
-            self.add_ui_rect(&res);
-            let res = egui::Window::new("Debug")
-                .anchor(Align2::LEFT_TOP, Vec2::ZERO)
-                .show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(screen_size.1 as f32 * 0.8)
-                        .show(ui, |ui| {
-                            ctx.settings_ui(ui);
-                        });
-                    let msg = format!("Windows mouse {}, {},\n    egui {}, {}",
-                        self.mouse_debug.0,
-                        self.mouse_debug.1,
-                        self.mouse_debug.2.x,
-                        self.mouse_debug.2.y,
-                    );
-                    ui.label(egui::RichText::new(msg).size(18.0));
-                    let msg = format!("Windows size {}, {}, egui size {}, {}",
-                        self.window_size.0,
-                        self.window_size.1,
-                        self.screen_size.0,
-                        self.screen_size.1,
-                    );
-                    ui.label(egui::RichText::new(msg).size(18.0));
-                    let modifiers = current_egui_modifiers();
-                    let msg = format!("Ctrl {}, Alt {}, shift {}",
-                        modifiers.ctrl,
-                        modifiers.alt,
-                        modifiers.shift,
-                    );
-                    ui.label(egui::RichText::new(msg).size(18.0));
-                });
-            self.add_ui_rect(&res);
+            let debug = true;
+            if debug {
+                let res = egui::Window::new("Debug")
+                    .anchor(Align2::LEFT_TOP, Vec2::ZERO)
+                    .show(ctx, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(screen_size.1 as f32 * 0.8)
+                            .show(ui, |ui| {
+                                ctx.settings_ui(ui);
+                            });
+                        let msg = format!("Windows mouse {}, {},\n    egui {}, {}",
+                            self.mouse_debug.0,
+                            self.mouse_debug.1,
+                            self.mouse_debug.2.x,
+                            self.mouse_debug.2.y,
+                        );
+                        ui.label(egui::RichText::new(msg).size(18.0));
+                        let msg = format!("Windows size {}, {}, egui size {}, {}",
+                            self.window_size.0,
+                            self.window_size.1,
+                            self.screen_size.0,
+                            self.screen_size.1,
+                        );
+                        ui.label(egui::RichText::new(msg).size(18.0));
+                        let modifiers = current_egui_modifiers();
+                        let msg = format!("Ctrl {}, Alt {}, shift {}",
+                            modifiers.ctrl,
+                            modifiers.alt,
+                            modifiers.shift,
+                        );
+                        ui.label(egui::RichText::new(msg).size(18.0));
+                    });
+                self.add_ui_rect(&res);
+            }
+            if bw.is_replay_or_obs {
+                self.add_replay_ui(bw, ctx);
+            }
         });
         StepOutput {
             textures_delta: output.textures_delta,
             primitives: self.ctx.tessellate(output.shapes),
         }
+    }
+
+    fn add_replay_ui(&mut self, bw: &BwVars, ctx: &egui::Context) {
+        egui::Window::new("Replay_Resources")
+            .anchor(Align2::RIGHT_TOP, Vec2 { x: -10.0, y: 10.0 })
+            .movable(false)
+            .resizable(false)
+            .title_bar(false)
+            .show(ctx, |ui| {
+                // Teams are 1-based, not 100% sure if everybody is on team 1 or 0
+                // when there are no teams though, so including 0 too.
+                for team in 0..5 {
+                    ui.label(format!("Team {team}"));
+                    for player_id in 0..8 {
+                        let info = unsafe {
+                            let player = bw.players.add(player_id as usize);
+                            if (*player).team != team {
+                                continue;
+                            }
+                            // Show only human / computer player types
+                            let is_active = matches!((*player).player_type, 1 | 2);
+                            if !is_active {
+                                continue;
+                            }
+                            player_resources_info(bw, player, player_id)
+                        };
+                        ui.add(&info);
+                    }
+                }
+            });
     }
 
     fn add_ui_rect<T>(&mut self, response: &Option<egui::InnerResponse<T>>) {
@@ -300,6 +362,85 @@ impl OverlayState {
                 y: (y as f32 - y_offset) / y_div * screen_h,
             }
         }
+    }
+}
+
+struct PlayerInfo {
+    name: Cow<'static, str>,
+    color: Color32,
+    race: u8,
+    minerals: u32,
+    gas: u32,
+    supplies: [(u32, u32); 3],
+    workers: u32,
+}
+
+impl Widget for &PlayerInfo {
+    fn ui(self, ui: &mut egui::Ui) -> Response {
+        let size = Vec2 { x: 300.0, y: 20.0 };
+        ui.allocate_ui_with_layout(size, Layout::left_to_right(Align::Center), |ui| {
+            let name = egui::Label::new(egui::RichText::new(&*self.name).color(self.color));
+            ui.add_fixed_width(name, 140.0);
+            let stat_text_width = 80.0;
+            self.add_icon_text(ui, &self.minerals.to_string(), stat_text_width);
+            self.add_icon_text(ui, &self.gas.to_string(), stat_text_width);
+            self.add_icon_text(ui, &self.workers.to_string(), stat_text_width);
+            let (current, max) = self.supplies.get(self.race as usize)
+                .copied()
+                .unwrap_or((0, 0));
+            self.add_icon_text(ui, &format!("{} / {}", current, max), stat_text_width);
+        }).response
+    }
+}
+
+impl PlayerInfo {
+    fn add_icon_text(&self, ui: &mut egui::Ui, text: &str, width: f32) {
+        let label = egui::Label::new(text);
+        ui.add_fixed_width(label, width);
+    }
+}
+
+unsafe fn player_resources_info(
+    bw: &BwVars,
+    player: *mut bw::Player,
+    player_id: u8,
+) -> PlayerInfo {
+    let game = bw.game;
+    let get_supplies = |race| {
+        let used = game.supply_used(player_id, race);
+        let available = game.supply_provided(player_id, race)
+            .min(game.supply_max(player_id, race));
+        // Supply is internally twice the shown value (as zergling / scourge
+        // takes 0.5 supply per unit), used supply has to be rounded up
+        // when displayed.
+        (used.wrapping_add(1) / 2, available / 2)
+    };
+    let color = bw::player_color(game, bw.main_palette, player_id);
+    let supplies = [
+        get_supplies(Race::Zerg),
+        get_supplies(Race::Terran),
+        get_supplies(Race::Protoss),
+    ];
+    let workers = [bw_dat::unit::SCV, bw_dat::unit::PROBE, bw_dat::unit::DRONE]
+        .iter()
+        .map(|&unit| game.completed_count(player_id, unit))
+        .sum::<u32>();
+    let mut name = bw::player_name(player);
+    if name.is_empty() {
+        name = format!("Player {}", player_id + 1).into();
+    }
+    let mut race = (*player).race;
+    if race > 2 {
+        race = 0;
+    }
+    PlayerInfo {
+        name,
+        color: Color32::from_rgb(color[0], color[1], color[2]),
+        race,
+        minerals: game.minerals(player_id),
+        gas: game.gas(player_id),
+        supplies,
+        workers,
     }
 }
 

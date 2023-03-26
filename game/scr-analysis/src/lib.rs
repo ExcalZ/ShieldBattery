@@ -520,4 +520,8 @@ impl<'e> Analysis<'e> {
     pub fn draw_graphic_layers(&mut self) -> Option<VirtualAddress> {
         self.0.draw_graphic_layers()
     }
+
+    pub fn main_palette(&mut self) -> Option<Operand<'e>> {
+        self.0.main_palette()
+    }
 }

@@ -98,6 +98,8 @@ pub struct BwScr {
     vertex_buffer: Value<*mut scr::VertexBuffer>,
     renderer: Value<*mut scr::Renderer>,
     draw_commands: Value<*mut scr::DrawCommands>,
+    /// [[u8; 4]; 256], mostly unused in SC:R, but still gets used for player colors at least.
+    main_palette: Value<*mut u8>,
     replay_bfix: Option<Value<*mut scr::ReplayBfix>>,
     replay_gcfg: Option<Value<*mut scr::ReplayGcfg>>,
     anti_troll: Option<Value<*mut scr::AntiTroll>>,
@@ -1279,6 +1281,7 @@ impl BwScr {
         let renderer = analysis.renderer().ok_or("renderer")?;
         let draw_commands = analysis.draw_commands().ok_or("draw_commands")?;
         let map_width_pixels = analysis.map_width_pixels().ok_or("map_width_pixels")?;
+        let main_palette = analysis.main_palette().ok_or("main_palette")?;
         let screen_x = analysis.screen_x().ok_or("screen_x")?;
         let screen_y = analysis.screen_y().ok_or("screen_y")?;
         let game_screen_width_bwpx = analysis
@@ -1375,6 +1378,7 @@ impl BwScr {
             renderer: Value::new(ctx, renderer),
             draw_commands: Value::new(ctx, draw_commands),
             map_width_pixels: Value::new(ctx, map_width_pixels),
+            main_palette: Value::new(ctx, main_palette),
             screen_x: Value::new(ctx, screen_x),
             screen_y: Value::new(ctx, screen_y),
             game_screen_width_bwpx: Value::new(ctx, game_screen_width_bwpx),
@@ -1973,6 +1977,11 @@ impl BwScr {
                 let renderer = self.renderer.resolve();
                 let commands = self.draw_commands.resolve();
                 let vertex_buffer = self.vertex_buffer.resolve();
+                let players = self.players();
+                let game = bw_dat::Game::from_ptr(self.game());
+                let is_replay_or_obs = self.is_replay.resolve() != 0 ||
+                    self.local_unique_player_id.resolve() >= 0x80;
+                let main_palette = self.main_palette.resolve();
                 // Assuming that the last added draw command (Added during orig() call)
                 // will have the is_hd value that is currently being used.
                 // Could also probably examine the render target from get_render_target,
@@ -1989,7 +1998,15 @@ impl BwScr {
                         1,
                     );
                     let size = ((*render_target.bw).width, (*render_target.bw).height);
-                    let overlay_out = render_state.overlay.step(size);
+                    let overlay_out = render_state.overlay.step(
+                        &draw_overlay::BwVars {
+                            is_replay_or_obs,
+                            game,
+                            players,
+                            main_palette,
+                        },
+                        size,
+                    );
                     draw_inject::add_overlays(
                         &mut render_state.render,
                         &draw_inject::BwVars {

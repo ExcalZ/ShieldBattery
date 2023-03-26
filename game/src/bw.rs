@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::CStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -479,5 +480,21 @@ impl Iterator for FowSpriteIterator {
             self.0 = (*fow).next;
         }
         Some(fow)
+    }
+}
+
+pub unsafe fn player_name(player: *mut Player) -> Cow<'static, str> {
+    let name_length = (*player).name.iter().position(|&x| x == 0).unwrap_or((*player).name.len());
+    let name = &(*player).name[..name_length];
+    String::from_utf8_lossy(name)
+}
+
+pub unsafe fn player_color(game: bw_dat::Game, main_palette: *mut u8, player_id: u8) -> [u8; 3] {
+    match (**game).player_minimap_color.get(player_id as usize) {
+        Some(&s) => {
+            let color = main_palette.add(4 * s as usize);
+            [*color, *color.add(1), *color.add(2)]
+        }
+        None => [0xff, 0xff, 0xff],
     }
 }
