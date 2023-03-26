@@ -138,7 +138,10 @@ pub struct BwVars {
     pub renderer: *mut scr::Renderer,
     pub commands: *mut scr::DrawCommands,
     pub vertex_buf: *mut scr::VertexBuffer,
+    pub statres_icons: *mut scr::DdsGrpSet,
+    pub cmdicons: *mut scr::DdsGrpSet,
     pub is_hd: bool,
+    pub is_carbot: bool,
 }
 
 pub unsafe fn add_overlays(
@@ -200,6 +203,39 @@ fn align6(val: u32) -> u32 {
     }
 }
 
+unsafe fn draw_overlay_texture_ptr(
+    bw: &BwVars,
+    egui_user_id: u64,
+) -> Option<*mut scr::RendererTexture> {
+    use draw_overlay::Texture;
+    match Texture::from_egui_user_id(egui_user_id)? {
+        Texture::StatRes(frame) => ddsgrp_frame(bw.statres_icons, bw, frame),
+        Texture::CmdIcon(frame) => ddsgrp_frame(bw.cmdicons, bw, frame),
+    }
+}
+
+unsafe fn ddsgrp_frame(
+    grp: *mut scr::DdsGrpSet,
+    bw: &BwVars,
+    frame: u16,
+) -> Option<*mut scr::RendererTexture> {
+    let index = match (bw.is_hd, bw.is_carbot) {
+        (false, _) => 0,
+        (true, false) => 1,
+        (true, true) => 2,
+    };
+    let ddsgrp = addr_of_mut!((*grp).dds_grps[index]);
+    if frame >= (*ddsgrp).frame_count || (*ddsgrp).textures.is_null() {
+        return None;
+    }
+    let texture = (*ddsgrp).textures.add(frame as usize);
+    let renderer_texture = (*texture).renderer_texture;
+    if renderer_texture.is_null() {
+        return None;
+    }
+    Some(renderer_texture)
+}
+
 unsafe fn draw_egui_mesh(
     layer: u16,
     state: &mut RenderState,
@@ -208,8 +244,13 @@ unsafe fn draw_egui_mesh(
     render_target: &RenderTarget,
     clip_rect: &egui::Rect,
 ) -> Result<(), DrawError> {
-    let texture = state.textures.get(&mesh.texture_id)
-        .ok_or_else(|| DrawError::InvalidTexture(mesh.texture_id))?;
+    let texture = match mesh.texture_id {
+        TextureId::Managed(_) => {
+            state.textures.get(&mesh.texture_id)
+                .map(|x| x.bw())
+        }
+        TextureId::User(id) => draw_overlay_texture_ptr(bw, id),
+    }.ok_or_else(|| DrawError::InvalidTexture(mesh.texture_id))?;
     if mesh.vertices.len() < 0x10000 {
         draw_egui_mesh_main(
             layer,
@@ -240,7 +281,7 @@ unsafe fn draw_egui_mesh_main<I: IndexSize>(
     layer: u16,
     indices: &[I],
     vertices: &[epaint::Vertex],
-    texture: &OwnedBwTexture,
+    texture: *mut scr::RendererTexture,
     bw: &BwVars,
     render_target: &RenderTarget,
     clip_rect: &egui::Rect,
@@ -283,7 +324,7 @@ unsafe fn draw_egui_mesh_main<I: IndexSize>(
         subcommands_post: EMPTY_SUB_COMMANDS,
         shader_constants: [0.0f32; 0x14],
     };
-    (*draw_command).texture_ids[0] = texture.bw() as usize;
+    (*draw_command).texture_ids[0] = texture as usize;
     // Set multiplyColor
     (*draw_command).shader_constants[0x0] = 1.0;
     (*draw_command).shader_constants[0x1] = 1.0;

@@ -100,6 +100,8 @@ pub struct BwScr {
     draw_commands: Value<*mut scr::DrawCommands>,
     /// [[u8; 4]; 256], mostly unused in SC:R, but still gets used for player colors at least.
     main_palette: Value<*mut u8>,
+    statres_icons: Value<*mut scr::DdsGrpSet>,
+    cmdicons: Value<*mut scr::DdsGrpSet>,
     replay_bfix: Option<Value<*mut scr::ReplayBfix>>,
     replay_gcfg: Option<Value<*mut scr::ReplayGcfg>>,
     anti_troll: Option<Value<*mut scr::AntiTroll>>,
@@ -792,6 +794,36 @@ pub mod scr {
         pub command: *mut DrawCommand,
     }
 
+    #[repr(C)]
+    pub struct Texture {
+        // TODO 64bit: is this u32 or usize?
+        pub unk: u32,
+        pub width: u16,
+        pub height: u16,
+        pub renderer_texture: *mut RendererTexture,
+        pub scale: u16,
+    }
+
+    #[repr(C)]
+    pub struct DdsGrp {
+        pub frame_count: u16,
+        pub textures: *mut Texture,
+    }
+
+    #[repr(C)]
+    pub struct DdsGrpSet {
+        // Legacy palette renderer GRP (Same struct as pre-SC:R)
+        pub grp: *mut c_void,
+        // SD, HD, Carbot (Carbot is not required to be loaded)
+        pub dds_grps: [DdsGrp; 0x3],
+        pub ui_asset_id: u32,
+        pub unk_20: u8,
+        pub unk_21: u8,
+        pub unk_22: u8,
+        pub unk_23: u8,
+        pub unk_24: u8,
+    }
+
     unsafe impl Sync for PrismShader {}
     unsafe impl Send for PrismShader {}
 
@@ -814,6 +846,9 @@ pub mod scr {
         assert_eq!(size_of::<VertexBuffer>(), 0x4c);
         assert_eq!(size_of::<RenderTarget>(), 0x20);
         assert_eq!(size_of::<DrawSort>(), 0x8);
+        assert_eq!(size_of::<Texture>(), 0x10);
+        assert_eq!(size_of::<DdsGrp>(), 0x8);
+        assert_eq!(size_of::<DdsGrpSet>(), 0x28);
     }
 }
 
@@ -1282,6 +1317,8 @@ impl BwScr {
         let draw_commands = analysis.draw_commands().ok_or("draw_commands")?;
         let map_width_pixels = analysis.map_width_pixels().ok_or("map_width_pixels")?;
         let main_palette = analysis.main_palette().ok_or("main_palette")?;
+        let statres_icons = analysis.statres_icons().ok_or("statres_icons")?;
+        let cmdicons = analysis.cmdicons().ok_or("cmdicons")?;
         let screen_x = analysis.screen_x().ok_or("screen_x")?;
         let screen_y = analysis.screen_y().ok_or("screen_y")?;
         let game_screen_width_bwpx = analysis
@@ -1379,6 +1416,8 @@ impl BwScr {
             draw_commands: Value::new(ctx, draw_commands),
             map_width_pixels: Value::new(ctx, map_width_pixels),
             main_palette: Value::new(ctx, main_palette),
+            statres_icons: Value::new(ctx, statres_icons),
+            cmdicons: Value::new(ctx, cmdicons),
             screen_x: Value::new(ctx, screen_x),
             screen_y: Value::new(ctx, screen_y),
             game_screen_width_bwpx: Value::new(ctx, game_screen_width_bwpx),
@@ -1982,6 +2021,8 @@ impl BwScr {
                 let is_replay_or_obs = self.is_replay.resolve() != 0 ||
                     self.local_unique_player_id.resolve() >= 0x80;
                 let main_palette = self.main_palette.resolve();
+                let statres_icons = self.statres_icons.resolve();
+                let cmdicons = self.cmdicons.resolve();
                 // Assuming that the last added draw command (Added during orig() call)
                 // will have the is_hd value that is currently being used.
                 // Could also probably examine the render target from get_render_target,
@@ -1991,6 +2032,7 @@ impl BwScr {
                     .and_then(|idx| (*commands).commands.get(idx as usize))
                     .map(|x| x.is_hd != 0)
                     .unwrap_or(false);
+                let is_carbot = self.is_carbot.load(Ordering::Relaxed);
                 if let Some(mut render_state) = self.render_state.lock() {
                     // Render target 1 is for UI layers (0xb to 0x1d inclusive)
                     let render_target = draw_inject::RenderTarget::new(
@@ -2014,6 +2056,9 @@ impl BwScr {
                             commands,
                             vertex_buf: vertex_buffer,
                             is_hd,
+                            is_carbot,
+                            statres_icons,
+                            cmdicons,
                         },
                         overlay_out,
                         &render_target,

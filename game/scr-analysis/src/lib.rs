@@ -58,7 +58,7 @@ impl<'e> Analysis<'e> {
     }
 
     pub fn storm_players(&mut self) -> Option<Operand<'e>> {
-        self.0.net_players().map(|x| x.0)
+        self.0.net_players()
     }
 
     pub fn init_net_player(&mut self) -> Option<VirtualAddress> {
@@ -523,5 +523,13 @@ impl<'e> Analysis<'e> {
 
     pub fn main_palette(&mut self) -> Option<Operand<'e>> {
         self.0.main_palette()
+    }
+
+    pub fn statres_icons(&mut self) -> Option<Operand<'e>> {
+        self.0.statres_icons_ddsgrp()
+    }
+
+    pub fn cmdicons(&mut self) -> Option<Operand<'e>> {
+        self.0.cmdicons_ddsgrp()
     }
 }

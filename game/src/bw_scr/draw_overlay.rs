@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use egui::{
-    Align, Align2, Color32, Event, Layout, Key, PointerButton, Pos2, Rect, Response, Sense, Vec2,
-    Widget,
+    Align, Align2, Color32, Event, Layout, Key, PointerButton, Pos2, Rect, Response, Sense,
+    TextureId, Vec2, Widget,
 };
 use egui::style::{TextStyle};
 use winapi::shared::windef::{HWND, POINT};
@@ -40,6 +40,39 @@ pub struct BwVars {
     pub game: bw_dat::Game,
     pub players: *mut bw::Player,
     pub main_palette: *mut u8,
+}
+
+pub enum Texture {
+    StatRes(u16),
+    CmdIcon(u16),
+}
+
+// No real reason to start with 0x2000_0000, but since egui gives u64 range,
+// might as well not start from 0.
+const TEXTURE_FIRST_STATRES: u64 = 0x2000_0000;
+const TEXTURE_LAST_STATRES: u64 = TEXTURE_FIRST_STATRES + 0xffff;
+const TEXTURE_FIRST_CMDICON: u64 = TEXTURE_LAST_STATRES + 1;
+const TEXTURE_LAST_CMDICON: u64 = TEXTURE_FIRST_CMDICON + 0xffff;
+
+impl Texture {
+    pub fn to_egui_id(self) -> u64 {
+        match self {
+            Texture::StatRes(frame) => TEXTURE_FIRST_STATRES + frame as u64,
+            Texture::CmdIcon(frame) => TEXTURE_FIRST_CMDICON + frame as u64,
+        }
+    }
+
+    pub fn from_egui_user_id(val: u64) -> Option<Texture> {
+        Some(match val {
+            TEXTURE_FIRST_STATRES ..= TEXTURE_LAST_STATRES => {
+                Texture::StatRes((val - TEXTURE_FIRST_STATRES) as u16)
+            }
+            TEXTURE_FIRST_CMDICON ..= TEXTURE_LAST_CMDICON => {
+                Texture::CmdIcon((val - TEXTURE_FIRST_CMDICON) as u16)
+            }
+            _ => return None,
+        })
+    }
 }
 
 trait UiExt {
@@ -377,24 +410,46 @@ struct PlayerInfo {
 
 impl Widget for &PlayerInfo {
     fn ui(self, ui: &mut egui::Ui) -> Response {
-        let size = Vec2 { x: 300.0, y: 20.0 };
+        let size = Vec2 { x: 300.0, y: 24.0 };
         ui.allocate_ui_with_layout(size, Layout::left_to_right(Align::Center), |ui| {
             let name = egui::Label::new(egui::RichText::new(&*self.name).color(self.color));
             ui.add_fixed_width(name, 140.0);
             let stat_text_width = 80.0;
-            self.add_icon_text(ui, &self.minerals.to_string(), stat_text_width);
-            self.add_icon_text(ui, &self.gas.to_string(), stat_text_width);
-            self.add_icon_text(ui, &self.workers.to_string(), stat_text_width);
+
+            let mineral_icon = Texture::StatRes(0);
+            self.add_icon_text(ui, mineral_icon, &self.minerals.to_string(), stat_text_width);
+            let gas_icon = Texture::StatRes(1 + self.race.min(2u8) as u16);
+            self.add_icon_text(ui, gas_icon, &self.gas.to_string(), stat_text_width);
+
+            let worker_icon = Texture::CmdIcon(match self.race {
+                0 => bw_dat::unit::DRONE.0,
+                1 => bw_dat::unit::SCV.0,
+                2 | _ => bw_dat::unit::PROBE.0,
+            });
+            self.add_icon_text(ui, worker_icon, &self.workers.to_string(), stat_text_width);
+
+            // TODO Could add other races if player has supply for them?
+            // But then each PlayerInfo render should agree on how many race supplies are drawn
+            // to keep things on a grid.
             let (current, max) = self.supplies.get(self.race as usize)
                 .copied()
                 .unwrap_or((0, 0));
-            self.add_icon_text(ui, &format!("{} / {}", current, max), stat_text_width);
+            let supply_text = format!("{} / {}", current, max);
+            let supply_icon = Texture::StatRes(4 + self.race.min(2u8) as u16);
+            self.add_icon_text(ui, supply_icon, &supply_text, stat_text_width);
         }).response
     }
 }
 
 impl PlayerInfo {
-    fn add_icon_text(&self, ui: &mut egui::Ui, text: &str, width: f32) {
+    fn add_icon_text(
+        &self,
+        ui: &mut egui::Ui,
+        icon: Texture,
+        text: &str,
+        width: f32,
+    ) {
+        ui.image(TextureId::User(icon.to_egui_id()), (24.0, 24.0));
         let label = egui::Label::new(text);
         ui.add_fixed_width(label, width);
     }
