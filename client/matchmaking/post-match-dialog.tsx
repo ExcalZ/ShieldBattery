@@ -39,6 +39,7 @@ import {
   singleLine,
 } from '../styles/typography'
 import { DivisionIcon } from './rank-icon'
+import { useTranslation } from 'react-i18next'
 
 const StyledDialog = styled(Dialog)<{ $hasLeagues?: boolean }>`
   max-width: ${props => (props.$hasLeagues ? '632px' : '432px')};
@@ -163,7 +164,7 @@ export function PostMatchDialog({
     const isSearching = !!s.matchmaking.searchInfo
     return !isSearching && (!currentParty || currentParty.leader === s.auth.user.id)
   })
-
+  const { t } = useTranslation()
   const leagueValues = useMemo(() => {
     const leagueById = new Map(leagues.map(l => [l.id, l]))
     const result = []
@@ -188,7 +189,7 @@ export function PostMatchDialog({
     <StyledDialog
       dialogRef={dialogRef}
       showCloseButton={true}
-      title='Match results'
+      title={t('matchmaking.postMatchDialog.matchResultsDialogHeader', 'Match results')}
       onCancel={onCancel}
       $hasLeagues={leagueValues.length > 0}>
       {mmrChange.lifetimeGames >= NUM_PLACEMENT_MATCHES ? (
@@ -198,13 +199,13 @@ export function PostMatchDialog({
       )}
       <ButtonBar>
         <RaisedButton
-          label='Search again'
+          label={t('matchmaking.postMatchDialog.searchAgainButtonText', 'Search again')}
           iconStart={<SizedSearchAgainIcon />}
           onClick={onSearchAgain}
           disabled={!canSearchMatchmaking}
         />
         <RaisedButton
-          label='Watch replay'
+          label={t('matchmaking.postMatchDialog.watchReplayButtonText', 'Watch replay')}
           iconStart={<MaterialIcon icon='videocam' />}
           onClick={onWatchReplay}
           disabled={!replayPath}
@@ -397,11 +398,14 @@ function RatedUserContent({
   )
 
   const [isAtTop, isAtBottom, topElem, bottomElem] = useScrollIndicatorState()
+  const { t } = useTranslation()
 
   return (
     <Content>
       <MatchmakingSide>
-        <SideOverline>Matchmaking</SideOverline>
+        <SideOverline>
+          {t('common.matchmaking', 'Matchmaking')}
+        </SideOverline>
         <IconAndDeltas>
           <IconWithLabel division={curDivisionWithBounds[0]} isWin={mmrChange.outcome === 'win'} />
           <Deltas>
@@ -414,7 +418,9 @@ function RatedUserContent({
       </MatchmakingSide>
       {leagueValues.length > 0 ? (
         <LeagueSide>
-          <SideOverline>Leagues</SideOverline>
+          <SideOverline>
+            {t('common.leagues', 'Leagues')}
+          </SideOverline>
           <Leagues>
             <GradientScrollDivider $showAt='top' $heightPx={32} $show={!isAtTop} />
             <LeaguesScrollable $needsScroll={!isAtTop || !isAtBottom}>
@@ -442,7 +448,7 @@ function UnratedUserContent({
   leagueValues: ReadonlyArray<{ league: ReadonlyDeep<LeagueJson>; value: number }>
 }) {
   const deltaValues = useMemo(
-    () => [{ label: 'Points', value: mmrChange.pointsChange }],
+    () => [{ label: {t('common.points', 'Points')}, value: mmrChange.pointsChange }],
     [mmrChange],
   )
 
