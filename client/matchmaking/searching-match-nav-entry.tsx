@@ -7,6 +7,7 @@ import { useStableCallback } from '../state-hooks'
 import { colorTextSecondary } from '../styles/colors'
 import { body2, cabin, TitleOld } from '../styles/typography'
 import { ElapsedTime } from './elapsed-time'
+import { useTranslation } from 'react-i18next'
 
 const SearchingContainer = styled.div`
   display: flex;
@@ -43,27 +44,28 @@ export interface SearchingMatchNavEntryProps {
 
 export function SearchingMatchNavEntry(props: SearchingMatchNavEntryProps) {
   const onCancelClick = useStableCallback(props.onCancelSearch)
+  const { t } = useTranslation()
 
   return (
     <>
       <SearchingContainer>
         <SearchTitle>
           {props.isMatched
-            ? 'Match found!'
-            : `Searching for ${matchmakingTypeToLabel(props.matchmakingType)}`}
+            ? {t('matchmaking.findMatch.matchFoundText', 'Match found!')}
+            : {t('matchmaking.findMatch.searchingForText', `Searching for ${matchmakingTypeToLabel(props.matchmakingType)}`)}}
         </SearchTitle>
         {!props.isMatched ? (
           <SubheaderButton
             icon={<CancelSearchIcon />}
-            title='Cancel search'
+            title={t('matchmaking.findMatch.cancelSearchButtonText', 'Cancel search')}
             onClick={onCancelClick}
           />
         ) : null}
       </SearchingContainer>
       {props.isMatched ? (
-        <AcceptingText>&hellip;</AcceptingText>
+        <AcceptingText>'\u2026'</AcceptingText>
       ) : (
-        <StyledElapsedTime prefix={'Time: '} startTimeMs={props.startTime} />
+        <StyledElapsedTime prefix={{t('common.time', 'Time: ')}} startTimeMs={props.startTime} />
       )}
     </>
   )
