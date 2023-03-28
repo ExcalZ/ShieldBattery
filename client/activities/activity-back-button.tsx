@@ -4,12 +4,14 @@ import BackIcon from '../icons/material/arrow_back-24px.svg'
 import { IconButton } from '../material/button'
 import { useAppDispatch, useAppSelector } from '../redux-hooks'
 import { goBack } from './action-creators'
+import { useTranslation } from 'react-i18next'
 
 const BackButton = styled(IconButton)`
   margin-right: 16px;
 `
 
 export function ActivityBackButton() {
+  const { t } = useTranslation()
   const dispatch = useAppDispatch()
   const historySize = useAppSelector(s => s.activityOverlay.history.length)
   // We only check to see if the back button should display on the first render, and keep it from
@@ -21,5 +23,5 @@ export function ActivityBackButton() {
     dispatch(goBack())
   }, [dispatch])
 
-  return shouldShow ? <BackButton icon={<BackIcon />} title='Back' onClick={onBackClick} /> : null
+  return shouldShow ? <BackButton icon={<BackIcon />} title={t('common.back', 'Back')} onClick={onBackClick} /> : null
 }
